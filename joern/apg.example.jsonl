@@ -1,0 +1,5 @@
+{"kind":"node","externalId":"endpoint:order-submit","type":"Endpoint","name":"POST /orders/:id/submit","artifactPath":"server/http/orders.js","range":{"startLine":10,"endLine":15},"sourceTool":"joern-apg-adapter","properties":{"method":"POST"}}
+{"kind":"node","externalId":"auth:order-owner","type":"AuthorizationCheck","name":"requireOrderOwner","artifactPath":"server/auth/orders.js","range":{"startLine":4,"endLine":18},"sourceTool":"joern-apg-adapter","properties":{}}
+{"kind":"node","externalId":"query:submit-order","type":"Query","name":"submit_order","artifactPath":"database/queries/submit.sql","range":{"startLine":1,"endLine":8},"sourceTool":"postgres-adapter","properties":{"writes":["orders.status","orders.version"]}}
+{"kind":"edge","externalId":"edge:endpoint-auth","type":"AUTHORIZED_BY","source":"endpoint:order-submit","target":"auth:order-owner","sourceTool":"stateguard-mapping","properties":{"confidence":"asserted"}}
+{"kind":"edge","externalId":"edge:endpoint-query","type":"CALLS","source":"endpoint:order-submit","target":"query:submit-order","sourceTool":"joern-apg-adapter","properties":{}}

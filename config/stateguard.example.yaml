@@ -1,0 +1,63 @@
+project:
+  key: order-service
+  name: Order Service
+  owner: commerce-platform
+  criticality: high
+
+scanning:
+  source_roots:
+    - client
+    - server
+    - database
+    - workers
+  excludes:
+    - '**/node_modules/**'
+    - '**/dist/**'
+    - '**/coverage/**'
+    - '**/*.min.js'
+    - '**/*.map'
+  generated_paths:
+    - '**/generated/**'
+    - '**/*.generated.*'
+  max_file_bytes: 4194304
+
+review:
+  max_files_per_unit: 60
+  critical_paths:
+    - 'database/migrations/**'
+    - 'server/orders/**'
+    - 'server/payments/**'
+    - 'workers/outbox/**'
+  required_surface_kinds:
+    - input
+    - validation
+    - authorization
+    - command
+    - transaction
+    - database
+    - external-effect
+    - query
+    - ui-projection
+    - migration
+    - job
+
+specification:
+  file: .stateguard/specification.yaml
+  mappings: .stateguard/mappings.yaml
+  event_b_project: formal/OrderWorkflow
+
+integrations:
+  sonarqube:
+    project_key: order-service
+    host_url_env: SONAR_HOST_URL
+    token_env: SONAR_TOKEN
+  semgrep:
+    report: .stateguard/results/semgrep.sarif
+    rules:
+      - .stateguard/rules
+      - /opt/company-rules/stateguard
+  joern:
+    output: .stateguard/results/joern
+    languages:
+      - JAVASCRIPT
+      - JAVASRC

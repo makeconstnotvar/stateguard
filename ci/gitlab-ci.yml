@@ -1,0 +1,60 @@
+stages:
+  - fast
+  - test
+  - publish
+  - deep
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+.default_stateguard:
+  tags: [internal, linux, stateguard]
+  before_script:
+    - python -m pip install /opt/stateguard/stateguard-implementation-kit
+  cache:
+    key: "$CI_PROJECT_NAME"
+    paths:
+      - .cache/pip
+      - .stateguard/cache
+
+state_guard_fast:
+  extends: .default_stateguard
+  stage: fast
+  script:
+    - stateguard scan
+    - ./scripts/run-semgrep.sh "$CI_PROJECT_DIR"
+    - stateguard import-sarif .stateguard/results/semgrep.sarif
+    - stateguard export-sarif
+    - stateguard doctor
+  artifacts:
+    when: always
+    expire_in: 14 days
+    paths:
+      - .stateguard/results
+      - .stateguard/reports
+
+project_tests:
+  extends: .default_stateguard
+  stage: test
+  script:
+    - ./ci/project-full-checks.sh
+    - ./ci/run-database-concurrency-suite.sh
+
+sonarqube:
+  extends: .default_stateguard
+  stage: publish
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
+    - ./scripts/run-sonar.sh "$CI_PROJECT_DIR"
+
+stateguard_deep:
+  extends: .default_stateguard
+  stage: deep
+  tags: [internal, linux, stateguard-deep]
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule"'
+  script:
+    - ./scripts/run-joern.sh "$CI_PROJECT_DIR"
+    - ./ci/run-model-checking.sh
+    - stateguard doctor --strict

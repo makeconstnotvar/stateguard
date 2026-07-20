@@ -1,0 +1,17 @@
+sonar.projectKey=order-service
+sonar.projectName=Order Service
+sonar.sourceEncoding=UTF-8
+
+# Keep this list explicit. Never scan vendored dependencies and generated bundles as first-party code.
+sonar.sources=client,server,database,workers
+sonar.tests=tests
+sonar.exclusions=**/node_modules/**,**/dist/**,**/build/**,**/coverage/**,**/*.min.js,**/*.map
+sonar.test.inclusions=tests/**,**/*.test.*,**/*.spec.*
+
+# StateGuard and Semgrep are imported as external issues. The external rules remain governed
+# by their own rulesets and ledger, not by SonarQube quality profiles.
+sonar.sarifReportPaths=.stateguard/results/semgrep.sarif,.stateguard/results/stateguard.sarif
+
+# Add language-specific coverage paths in the repository, for example:
+# sonar.javascript.lcov.reportPaths=coverage/lcov.info
+# sonar.python.coverage.reportPaths=coverage.xml

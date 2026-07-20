@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/mappings.schema.json",
+  "title": "StateGuard implementation mappings",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project", "components", "entities", "invariants", "commands", "observations", "framework_adapters"],
+  "$defs": {
+    "location": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "selector"],
+      "properties": {
+        "kind": {"enum": ["file", "symbol", "route", "query", "table", "column", "constraint", "index", "test", "job", "ui-action", "event-b-element"]},
+        "selector": {"type": "string", "minLength": 1},
+        "path": {"type": "string"},
+        "language": {"type": "string"},
+        "notes": {"type": "string"}
+      }
+    },
+    "mapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "locations"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "locations": {"type": "array", "items": {"$ref": "#/$defs/location"}},
+        "evidence_required": {"type": "array", "items": {"type": "string"}},
+        "owner": {"type": "string"}
+      }
+    }
+  },
+  "properties": {
+    "version": {"const": 1},
+    "project": {"type": "string"},
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "paths"],
+        "properties": {
+          "id": {"type": "string"},
+          "kind": {"enum": ["ui", "api", "domain", "persistence", "database", "worker", "integration", "shared"]},
+          "paths": {"type": "array", "items": {"type": "string"}},
+          "depends_on": {"type": "array", "items": {"type": "string"}}
+        },
+        "additionalProperties": false
+      }
+    },
+    "entities": {"type": "array", "items": {"$ref": "#/$defs/mapping"}},
+    "invariants": {"type": "array", "items": {"$ref": "#/$defs/mapping"}},
+    "commands": {"type": "array", "items": {"$ref": "#/$defs/mapping"}},
+    "observations": {"type": "array", "items": {"$ref": "#/$defs/mapping"}},
+    "framework_adapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "framework", "rules"],
+        "properties": {
+          "id": {"type": "string"},
+          "framework": {"type": "string"},
+          "rules": {
+            "type": "object",
+            "additionalProperties": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  }
+}

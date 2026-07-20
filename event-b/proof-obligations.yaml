@@ -1,0 +1,28 @@
+version: 1
+model: OrderWorkflow
+model_kind: classical-b-prob-smoke
+production_model: Rodin Event-B refinement chain
+links:
+  - model_predicate: paid order requires a confirmed payment of the same order
+    specification_id: INV-ORDER-001
+    obligations:
+      - PO-INV-ORDER-001-BY-CMD-ORDER-MARK-PAID
+  - model_operation: submit
+    specification_id: CMD-ORDER-SUBMIT
+    obligations:
+      - PO-INV-ORDER-002-BY-CMD-ORDER-SUBMIT
+      - PO-INV-ORDER-003-BY-CMD-ORDER-SUBMIT
+  - model_operation: mark_paid
+    specification_id: CMD-ORDER-MARK-PAID
+    obligations:
+      - PO-INV-ORDER-001-BY-CMD-ORDER-MARK-PAID
+      - PO-INV-ORDER-002-BY-CMD-ORDER-MARK-PAID
+      - PO-INV-ORDER-003-BY-CMD-ORDER-MARK-PAID
+required_export:
+  - tool_version
+  - model_sha256
+  - command
+  - preferences_and_bounds
+  - result
+  - explored_states
+  - counterexample_trace

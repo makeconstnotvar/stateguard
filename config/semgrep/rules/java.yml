@@ -1,0 +1,39 @@
+rules:
+  - id: stateguard.java-swallowed-exception
+    languages: [java]
+    severity: WARNING
+    message: >-
+      Exception поглощён пустым catch. Ожидаемый отказ должен быть типизирован, неожиданный —
+      наблюдаем и не должен позволять обработке продолжиться с частично изменённым состоянием.
+    metadata:
+      category: correctness
+      stateguard_surface: failure-semantics
+      confidence: high
+    pattern: |
+      try {
+        ...
+      } catch ($TYPE $ERR) {
+      }
+
+  - id: stateguard.java-external-effect-in-transactional-method
+    languages: [java]
+    severity: WARNING
+    message: >-
+      В @Transactional method найден потенциальный внешний HTTP-вызов. Проверьте retry/rollback,
+      idempotency и перенос эффекта в transactional outbox.
+    metadata:
+      category: concurrency
+      stateguard_surface: transaction-to-effect
+      confidence: low
+      template_rule: true
+    patterns:
+      - pattern-inside: |
+          @Transactional(...)
+          $RET $METHOD(...) {
+            ...
+          }
+      - pattern-either:
+          - pattern: $HTTP.send(...)
+          - pattern: $REST.exchange(...)
+          - pattern: $CLIENT.post(...)
+          - pattern: $CLIENT.execute(...)

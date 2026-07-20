@@ -1,0 +1,153 @@
+openapi: 3.1.0
+info:
+  title: StateGuard Control Plane API
+  version: 0.1.0
+servers:
+  - url: https://stateguard.internal
+paths:
+  /v1/runs:
+    post:
+      operationId: createRun
+      summary: Create or return an idempotent analysis run
+      security: [{workloadIdentity: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateRun'}
+      responses:
+        '200':
+          description: Existing idempotent run
+          content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}
+        '201':
+          description: Created
+          content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}
+  /v1/runs/{runId}/findings:
+    put:
+      operationId: putFindings
+      security: [{workloadIdentity: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RunId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/Finding'}}
+      responses:
+        '204': {description: Stored}
+  /v1/runs/{runId}/proofs:
+    put:
+      operationId: putProofs
+      security: [{workloadIdentity: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RunId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                items: {type: array, items: {$ref: '#/components/schemas/ProofAttempt'}}
+      responses:
+        '204': {description: Stored}
+  /v1/runs/{runId}/complete:
+    post:
+      operationId: completeRun
+      security: [{workloadIdentity: []}]
+      parameters:
+        - {$ref: '#/components/parameters/RunId'}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict: {enum: [red, yellow, green-by-evidence, unknown]}
+                summary: {type: object, additionalProperties: true}
+      responses:
+        '200': {description: Completed, content: {application/json: {schema: {$ref: '#/components/schemas/Run'}}}}
+components:
+  securitySchemes:
+    workloadIdentity:
+      type: http
+      scheme: bearer
+  parameters:
+    RunId:
+      name: runId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  schemas:
+    CreateRun:
+      type: object
+      additionalProperties: false
+      required: [repositoryKey, idempotencyKey, runType, commitSha, policySha256, sourceManifestSha256, startedAt]
+      properties:
+        repositoryKey: {type: string}
+        idempotencyKey: {type: string}
+        runType: {enum: [pr, main, nightly, release, manual]}
+        branch: {type: [string, 'null']}
+        commitSha: {type: string}
+        policySha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        specificationSha256: {type: [string, 'null']}
+        mappingsSha256: {type: [string, 'null']}
+        sourceManifestSha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+        toolchain: {type: object, additionalProperties: true}
+        startedAt: {type: string, format: date-time}
+    Run:
+      allOf:
+        - {$ref: '#/components/schemas/CreateRun'}
+        - type: object
+          required: [id, status]
+          properties:
+            id: {type: string, format: uuid}
+            status: {enum: [uploading, completed, failed, superseded]}
+            verdict: {enum: [red, yellow, green-by-evidence, unknown, null]}
+    Finding:
+      type: object
+      required: [stableKey, sourceTool, ruleId, severity, confidence, category, title, message, status]
+      properties:
+        stableKey: {type: string}
+        sourceTool: {type: string}
+        ruleId: {type: string}
+        severity: {enum: [critical, high, medium, low, info]}
+        confidence: {enum: [high, medium, low]}
+        category: {type: string}
+        title: {type: string}
+        message: {type: string}
+        pathHash: {type: [string, 'null']}
+        lineStart: {type: [integer, 'null']}
+        artifactSha256: {type: [string, 'null']}
+        invariantId: {type: [string, 'null']}
+        transitionId: {type: [string, 'null']}
+        counterexample: {type: [string, 'null']}
+        remediation: {type: [string, 'null']}
+        verification: {type: [string, 'null']}
+        status: {type: string}
+    ProofAttempt:
+      type: object
+      required: [obligationKey, kind, criticality, result, inputSha256, startedAt]
+      properties:
+        obligationKey: {type: string}
+        kind: {type: string}
+        criticality: {enum: [critical, high, medium, low]}
+        result: {enum: [pending, running, proved, verified, reviewed-ai, failed, inconclusive, waived, stale]}
+        evidenceClass: {type: [string, 'null']}
+        solver: {type: [string, 'null']}
+        toolVersion: {type: [string, 'null']}
+        inputSha256: {type: string}
+        assumptions: {type: array, items: {type: string}}
+        bounds: {type: object, additionalProperties: true}
+        command: {type: [string, 'null']}
+        summary: {type: [string, 'null']}
+        counterexample: {}
+        startedAt: {type: string, format: date-time}
+        finishedAt: {type: [string, 'null'], format: date-time}

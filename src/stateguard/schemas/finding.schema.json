@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/finding.schema.json",
+  "title": "StateGuard finding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["rule_id", "title", "severity", "confidence", "category", "message", "counterexample", "impact", "root_cause", "remediation", "verification"],
+  "properties": {
+    "rule_id": {"type": "string"},
+    "title": {"type": "string"},
+    "severity": {"enum": ["critical", "high", "medium", "low", "info"]},
+    "confidence": {"enum": ["high", "medium", "low"]},
+    "category": {"enum": ["implementation-defect", "specification-gap", "evidence-gap", "accepted-risk", "false-positive"]},
+    "message": {"type": "string"},
+    "invariant_id": {"type": ["string", "null"]},
+    "transition_id": {"type": ["string", "null"]},
+    "location": {
+      "type": ["object", "null"],
+      "properties": {
+        "path": {"type": "string"},
+        "start_line": {"type": "integer", "minimum": 1},
+        "end_line": {"type": "integer", "minimum": 1},
+        "artifact_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+      },
+      "required": ["path"],
+      "additionalProperties": false
+    },
+    "counterexample": {"type": "string", "minLength": 1},
+    "impact": {"type": "string", "minLength": 1},
+    "root_cause": {"type": "string", "minLength": 1},
+    "remediation": {"type": "string", "minLength": 1},
+    "verification": {"type": "string", "minLength": 1}
+  }
+}

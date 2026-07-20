@@ -1,0 +1,18 @@
+rules:
+  - id: stateguard.generic.todo-in-critical-path
+    languages: [generic]
+    severity: INFO
+    message: >-
+      TODO/FIXME найден в критичном срезе. Это не дефект само по себе; запись должна быть связана
+      с требованиями или finding, если она оставляет свойство недоказанным.
+    metadata:
+      category: evidence-gap
+      stateguard_surface: review-coverage
+      confidence: low
+    pattern-regex: '(?i)\b(TODO|FIXME|HACK)\b'
+    paths:
+      include:
+        - '**/migrations/**'
+        - '**/payments/**'
+        - '**/authorization/**'
+        - '**/transactions/**'

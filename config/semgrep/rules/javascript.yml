@@ -1,0 +1,118 @@
+rules:
+  - id: stateguard.javascript.sql-template-interpolation
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      SQL передаётся в database API через интерполированную template string. Параметры должны
+      передаваться отдельно; иначе путь внешних данных к запросу невозможно надёжно ограничить.
+    metadata:
+      category: correctness
+      stateguard_surface: database
+      confidence: high
+    patterns:
+      - pattern-either:
+          - pattern: $DB.query(`...${$VALUE}...`, ...)
+          - pattern: $DB.execute(`...${$VALUE}...`, ...)
+          - pattern: $DB.raw(`...${$VALUE}...`, ...)
+
+  - id: stateguard.javascript.raw-request-to-query
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: >-
+      Значение из HTTP request достигает database sink в пределах функции без утверждённого
+      decoder/validator. Настройте список sanitizers под фактическую библиотеку проекта.
+    metadata:
+      category: correctness
+      stateguard_surface: input-to-database
+      confidence: medium
+      note: Semgrep CE performs this taint analysis within its supported local scope.
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: $REQ.body
+          - pattern: $REQ.body.$FIELD
+          - pattern: $REQ.query.$FIELD
+          - pattern: $REQ.params.$FIELD
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $SCHEMA.parse(...)
+          - pattern: $SCHEMA.safeParse(...)
+          - pattern: validateRequest(...)
+          - pattern: decodeCommand(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $DB.query(..., $VALUE, ...)
+          - pattern: $DB.execute(..., $VALUE, ...)
+          - pattern: $REPO.update(..., $VALUE, ...)
+          - pattern: $REPO.save($VALUE)
+
+  - id: stateguard.javascript.external-effect-inside-transaction-callback
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Внутри callback транзакции выполняется внешний эффект. При rollback или retry эффект может
+      остаться без соответствующего commit либо выполниться повторно. Используйте outbox или
+      запускайте идемпотентный эффект после commit.
+    metadata:
+      category: concurrency
+      stateguard_surface: transaction-to-effect
+      confidence: medium
+    patterns:
+      - pattern-inside: |
+          $TX(async (...) => {
+            ...
+          })
+      - metavariable-regex:
+          metavariable: $TX
+          regex: '^(withTransaction|transaction|runInTransaction)$'
+      - pattern-either:
+          - pattern: fetch(...)
+          - pattern: axios.$METHOD(...)
+          - pattern: $MAILER.send(...)
+          - pattern: $BUS.publish(...)
+          - pattern: $CLIENT.post(...)
+
+  - id: stateguard.javascript.direct-status-write-outside-transition-layer
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Прямое изменение поля status найдено вне ожидаемых каталогов command/transition. Это может
+      обходить guards и инварианты. Настройте paths под архитектуру проекта либо оформите явный waiver.
+    metadata:
+      category: architecture
+      stateguard_surface: state-transition
+      confidence: low
+      template_rule: true
+    pattern-either:
+      - pattern: $ENTITY.status = $VALUE
+      - pattern: $ENTITY["status"] = $VALUE
+    paths:
+      exclude:
+        - '**/commands/**'
+        - '**/command/**'
+        - '**/transitions/**'
+        - '**/state-machine/**'
+        - '**/reducers/**'
+        - '**/tests/**'
+
+  - id: stateguard.javascript.empty-catch
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: >-
+      Исключение поглощено без типизированного результата, наблюдаемости или повторного выброса.
+      Такой путь превращает ошибку в неявное состояние системы.
+    metadata:
+      category: correctness
+      stateguard_surface: failure-semantics
+      confidence: high
+    pattern-either:
+      - pattern: |
+          try {
+            ...
+          } catch ($ERR) {}
+      - pattern: |
+          try {
+            ...
+          } catch ($ERR) {
+            // ...
+          }

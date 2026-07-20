@@ -1,0 +1,45 @@
+rules:
+  - id: stateguard.python.raw-request-to-query
+    languages: [python]
+    severity: ERROR
+    message: >-
+      Значение из HTTP request достигает database sink без видимого утверждённого decoder.
+      Адаптируйте sources, sanitizers и sinks под конкретный framework/ORM.
+    metadata:
+      category: correctness
+      stateguard_surface: input-to-database
+      confidence: medium
+    mode: taint
+    pattern-sources:
+      - pattern-either:
+          - pattern: request.json
+          - pattern: request.args[...]
+          - pattern: request.path_params[...]
+          - pattern: $REQUEST.data
+    pattern-sanitizers:
+      - pattern-either:
+          - pattern: $MODEL.model_validate(...)
+          - pattern: $SCHEMA.load(...)
+          - pattern: decode_command(...)
+    pattern-sinks:
+      - pattern-either:
+          - pattern: $CURSOR.execute(..., $VALUE, ...)
+          - pattern: $SESSION.execute(..., $VALUE, ...)
+          - pattern: $REPO.save($VALUE)
+
+  - id: stateguard.python-swallowed-exception
+    languages: [python]
+    severity: WARNING
+    message: >-
+      Exception превращён в молчаливое продолжение. Верните типизированный отказ, добавьте
+      наблюдаемость либо повторно выбросьте исключение после cleanup.
+    metadata:
+      category: correctness
+      stateguard_surface: failure-semantics
+      confidence: high
+    patterns:
+      - pattern: |
+          try:
+            ...
+          except $EXCEPTION:
+            pass

@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/stateguard.schema.json",
+  "title": "StateGuard project configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["project", "scanning", "review", "specification", "integrations"],
+  "properties": {
+    "project": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "name"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$"},
+        "name": {"type": "string", "minLength": 1},
+        "owner": {"type": "string"},
+        "criticality": {"enum": ["critical", "high", "medium", "low"]}
+      }
+    },
+    "scanning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_roots"],
+      "properties": {
+        "source_roots": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+        "excludes": {"type": "array", "items": {"type": "string"}},
+        "generated_paths": {"type": "array", "items": {"type": "string"}},
+        "max_file_bytes": {"type": "integer", "minimum": 1}
+      }
+    },
+    "review": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "max_files_per_unit": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "critical_paths": {"type": "array", "items": {"type": "string"}},
+        "required_surface_kinds": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "input", "validation", "authorization", "command", "transaction",
+              "database", "external-effect", "query", "ui-projection", "migration", "job"
+            ]
+          }
+        }
+      }
+    },
+    "specification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["file", "mappings"],
+      "properties": {
+        "file": {"type": "string"},
+        "mappings": {"type": "string"},
+        "event_b_project": {"type": "string"}
+      }
+    },
+    "integrations": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sonarqube": {
+          "type": "object",
+          "properties": {
+            "project_key": {"type": "string"},
+            "host_url_env": {"type": "string"},
+            "token_env": {"type": "string"}
+          }
+        },
+        "semgrep": {
+          "type": "object",
+          "properties": {
+            "report": {"type": "string"},
+            "rules": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "joern": {
+          "type": "object",
+          "properties": {
+            "output": {"type": "string"},
+            "languages": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      }
+    }
+  }
+}

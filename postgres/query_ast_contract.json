@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "query_id": "QUERY-ORDER-SUBMIT",
+  "dialect": "postgresql",
+  "source": {
+    "path": "database/queries/orders/submit.sql",
+    "sha256": "<filled-by-extractor>"
+  },
+  "statement_type": "UPDATE",
+  "reads": [
+    {"relation": "public.orders", "columns": ["id", "status", "version", "owner_id"]}
+  ],
+  "writes": [
+    {"relation": "public.orders", "columns": ["status", "version"]}
+  ],
+  "predicates": [
+    "orders.id = $1",
+    "orders.status = 'draft'",
+    "orders.version = $2"
+  ],
+  "locking": [],
+  "returning": ["id", "status", "version"],
+  "parameters": [
+    {"position": 1, "semantic_name": "order_id", "expected_type": "uuid"},
+    {"position": 2, "semantic_name": "expected_version", "expected_type": "bigint"}
+  ],
+  "parser": {
+    "name": "libpg_query-adapter",
+    "version": "<filled-by-extractor>"
+  }
+}

@@ -1,0 +1,61 @@
+name: stateguard-sonarqube
+
+services:
+  sonar-db:
+    image: ${SONAR_DB_IMAGE:-postgres:17}
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SONAR_DB_NAME:-sonar}
+      POSTGRES_USER: ${SONAR_DB_USER:-sonar}
+      POSTGRES_PASSWORD: ${SONAR_DB_PASSWORD:?Set SONAR_DB_PASSWORD in infra/.env}
+    volumes:
+      - sonar_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SONAR_DB_USER:-sonar} -d ${SONAR_DB_NAME:-sonar}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [sonar-internal]
+
+  sonarqube:
+    image: ${SONARQUBE_IMAGE:-sonarqube:26.7.0.124771-community}
+    restart: unless-stopped
+    depends_on:
+      sonar-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonar-db:5432/${SONAR_DB_NAME:-sonar}
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER:-sonar}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASSWORD:?Set SONAR_DB_PASSWORD in infra/.env}
+      SONAR_WEB_JAVAOPTS: ${SONAR_WEB_JAVAOPTS:--Xms512m -Xmx512m}
+      SONAR_CE_JAVAOPTS: ${SONAR_CE_JAVAOPTS:--Xms512m -Xmx1024m}
+      SONAR_SEARCH_JAVAOPTS: ${SONAR_SEARCH_JAVAOPTS:--Xms1g -Xmx1g}
+    ports:
+      - "${SONAR_BIND_ADDRESS:-127.0.0.1}:${SONAR_PORT:-9000}:9000"
+    volumes:
+      - sonar_data:/opt/sonarqube/data
+      - sonar_logs:/opt/sonarqube/logs
+      - sonar_extensions:/opt/sonarqube/extensions
+    tmpfs:
+      - /tmp:rw,exec,nosuid,size=1g,mode=1777
+    ulimits:
+      nofile:
+        soft: 131072
+        hard: 131072
+      nproc: 8192
+    stop_grace_period: 1h
+    networks:
+      - sonar-internal
+      - sonar-access
+
+networks:
+  sonar-internal:
+    internal: true
+  sonar-access:
+
+volumes:
+  sonar_db_data:
+  sonar_data:
+  sonar_logs:
+  sonar_extensions:

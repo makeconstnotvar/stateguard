@@ -1,0 +1,63 @@
+name: StateGuard
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 2 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  pr-fast:
+    if: github.event_name == 'pull_request'
+    runs-on: [self-hosted, linux, stateguard]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install StateGuard from internal artifact
+        run: python -m pip install /opt/stateguard/stateguard-implementation-kit
+      - name: Project tests and native analyzers
+        run: ./ci/project-fast-checks.sh
+      - name: StateGuard manifest and Semgrep
+        run: |
+          stateguard scan
+          ./scripts/run-semgrep.sh "$PWD"
+          stateguard import-sarif .stateguard/results/semgrep.sarif
+          stateguard export-sarif
+          stateguard doctor
+
+  main-publish:
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, linux, stateguard]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python -m pip install /opt/stateguard/stateguard-implementation-kit
+      - run: ./ci/project-full-checks.sh
+      - run: ./scripts/run-local-mvp.sh "$PWD"
+      - name: SonarQube analysis
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: ./scripts/run-sonar.sh "$PWD"
+      - name: Publish ledger summary to internal control plane
+        run: ./ci/publish-stateguard-summary.sh
+
+  nightly-deep:
+    if: github.event_name == 'schedule'
+    runs-on: [self-hosted, linux, stateguard-deep]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: python -m pip install /opt/stateguard/stateguard-implementation-kit
+      - run: stateguard scan
+      - run: ./scripts/run-joern.sh "$PWD"
+      - run: ./ci/run-model-checking.sh
+      - run: ./ci/run-database-concurrency-suite.sh
+      - run: stateguard doctor --strict

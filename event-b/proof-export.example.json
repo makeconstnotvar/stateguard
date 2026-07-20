@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "tool": "ProB",
+  "toolVersion": "PINNED_VERSION",
+  "model": "OrderWorkflow.mch",
+  "modelSha256": "REPLACE_AFTER_RUN",
+  "command": "probcli OrderWorkflow.mch -model_check -nodead -p MAX_OPERATIONS 10000",
+  "preferencesAndBounds": {"MAX_OPERATIONS": 10000},
+  "result": "checked-model",
+  "exploredStates": null,
+  "counterexampleTrace": null,
+  "obligations": [
+    "PO-INV-ORDER-001-BY-CMD-ORDER-MARK-PAID"
+  ]
+}

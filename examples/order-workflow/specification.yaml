@@ -1,0 +1,263 @@
+version: 1
+project: order-workflow-example
+
+scope:
+  product_type: business-application
+  included:
+    - order lifecycle
+    - payment confirmation
+    - cancellation
+    - UI projection of confirmed server state
+    - PostgreSQL persistence and concurrency
+  excluded:
+    - hardware failure
+    - compiler defects
+    - total data-centre outage
+  assumptions:
+    - PostgreSQL transactions and constraints follow the selected supported version's documented semantics.
+    - The payment provider honours a documented idempotency key for a single merchant operation.
+    - Authentication has already established an immutable actor identifier.
+  threat_model:
+    - malformed external input
+    - stale clients
+    - duplicate commands
+    - concurrent commands
+    - delayed or reordered responses
+    - partial application failure before transaction commit
+
+entities:
+  - id: ENT-ORDER
+    name: Order
+    aggregate_root: true
+    identity: [id]
+    version_field: version
+    fields:
+      - name: id
+        type: uuid
+        required: true
+      - name: owner_id
+        type: uuid
+        required: true
+      - name: status
+        type: order-status
+        required: true
+      - name: total_minor
+        type: integer
+        required: true
+        constraints:
+          - 'total_minor >= 0'
+      - name: currency
+        type: ISO-4217
+        required: true
+      - name: payment_id
+        type: uuid
+        required: false
+      - name: version
+        type: integer
+        required: true
+        constraints:
+          - 'version >= 1'
+
+  - id: ENT-PAYMENT
+    name: Payment
+    aggregate_root: true
+    identity: [id]
+    version_field: version
+    fields:
+      - name: id
+        type: uuid
+        required: true
+      - name: order_id
+        type: uuid
+        required: true
+      - name: status
+        type: payment-status
+        required: true
+      - name: provider_operation_id
+        type: string
+        required: true
+      - name: amount_minor
+        type: integer
+        required: true
+      - name: currency
+        type: ISO-4217
+        required: true
+      - name: version
+        type: integer
+        required: true
+
+states:
+  - id: STATE-ORDER
+    entity: ENT-ORDER
+    field: status
+    values: [draft, submitted, paid, cancelled]
+    initial: draft
+    terminal: [paid, cancelled]
+
+  - id: STATE-PAYMENT
+    entity: ENT-PAYMENT
+    field: status
+    values: [new, processing, confirmed, rejected, outcome_unknown]
+    initial: new
+    terminal: [confirmed, rejected]
+    unknown_outcome_states: [outcome_unknown]
+
+invariants:
+  - id: INV-ORDER-001
+    title: A paid order references one confirmed matching payment
+    criticality: critical
+    scope: [ENT-ORDER, ENT-PAYMENT]
+    predicate:
+      language: natural-language
+      value: >-
+        For every order with status paid there exists exactly one payment referenced by
+        order.payment_id; that payment belongs to the order, has status confirmed, and
+        has the same amount and currency.
+    rationale: Prevents an order from becoming paid without confirmed monetary evidence.
+    enforcement:
+      - event-b-proof
+      - database-constraint
+      - transaction
+      - integration-test
+    counterexample_template: >-
+      An order is committed as paid while its payment is absent, rejected, belongs to
+      another order, or differs by amount/currency.
+
+  - id: INV-ORDER-002
+    title: Terminal order states are irreversible
+    criticality: high
+    scope: [STATE-ORDER]
+    predicate: 'status in {paid, cancelled} implies next(status) = status'
+    rationale: Prevents duplicate fulfilment and resurrection of cancelled work.
+    enforcement:
+      - event-b-proof
+      - static-rule
+      - transaction
+      - model-test
+
+  - id: INV-ORDER-003
+    title: Order version increases on every committed mutation
+    criticality: high
+    scope: [ENT-ORDER]
+    predicate: 'committed_mutation(order) implies next(version) = version + 1'
+    rationale: Supports optimistic concurrency and monotonic client projections.
+    enforcement:
+      - transaction
+      - database-constraint
+      - integration-test
+
+commands:
+  - id: CMD-ORDER-SUBMIT
+    title: Submit an order
+    entity: ENT-ORDER
+    input:
+      - name: order_id
+        type: uuid
+        required: true
+      - name: expected_version
+        type: integer
+        required: true
+    guards:
+      - 'order.status = draft'
+      - 'order.version = expected_version'
+    authorization:
+      - 'actor.id = order.owner_id'
+    outcomes:
+      - id: OUT-ORDER-SUBMIT-ACCEPTED
+        kind: accepted
+        condition: 'all guards and authorization predicates hold'
+        postconditions:
+          - 'order.status = submitted'
+          - 'order.version = old(order.version) + 1'
+        response: accepted with the new authoritative order snapshot
+      - id: OUT-ORDER-SUBMIT-WRONG-STATE
+        kind: rejected
+        condition: 'order.status != draft'
+        response: wrong_state with current state and version
+      - id: OUT-ORDER-SUBMIT-STALE
+        kind: rejected
+        condition: 'order.version != expected_version'
+        response: stale_version with current authoritative version
+      - id: OUT-ORDER-SUBMIT-FORBIDDEN
+        kind: rejected
+        condition: 'actor.id != order.owner_id'
+        response: forbidden
+    atomicity:
+      required: true
+      strategy: single-statement
+      writes:
+        - orders.status
+        - orders.version
+    preserves: [INV-ORDER-002, INV-ORDER-003]
+
+  - id: CMD-ORDER-MARK-PAID
+    title: Mark order paid from confirmed payment
+    entity: ENT-ORDER
+    input:
+      - name: order_id
+        type: uuid
+        required: true
+      - name: payment_id
+        type: uuid
+        required: true
+      - name: expected_version
+        type: integer
+        required: true
+    guards:
+      - 'order.status = submitted'
+      - 'payment.status = confirmed'
+      - 'payment.order_id = order.id'
+      - 'payment.amount_minor = order.total_minor'
+      - 'payment.currency = order.currency'
+      - 'order.version = expected_version'
+    authorization:
+      - 'actor.kind = trusted-payment-worker'
+    outcomes:
+      - id: OUT-ORDER-PAID-ACCEPTED
+        kind: accepted
+        condition: 'all guards and authorization predicates hold'
+        postconditions:
+          - 'order.status = paid'
+          - 'order.payment_id = payment.id'
+          - 'order.version = old(order.version) + 1'
+        response: accepted
+      - id: OUT-ORDER-PAID-REJECTED
+        kind: rejected
+        condition: 'at least one guard is false'
+        response: typed rejection containing the failed guard class
+    atomicity:
+      required: true
+      strategy: transaction
+      writes:
+        - orders.status
+        - orders.payment_id
+        - orders.version
+    idempotency:
+      required: true
+      key: payment.provider_operation_id
+      deduplication_scope: order payment confirmation
+    preserves: [INV-ORDER-001, INV-ORDER-002, INV-ORDER-003]
+
+observations:
+  - id: OBS-ORDER-DETAIL
+    title: View one order
+    viewer: authenticated user
+    projection: >-
+      Return an order only when actor owns it or has the order-review permission;
+      expose payment provider identifiers only to privileged support roles.
+    authorization:
+      - 'actor.id = order.owner_id or actor.permissions contains order:review'
+    freshness: monotonic-version
+    sensitive_fields:
+      - payment.provider_operation_id
+
+external_effects:
+  - id: EFFECT-PAYMENT-REQUEST
+    title: Request payment provider operation
+    reversibility: irreversible
+    delivery: transactional-outbox
+    idempotency_key: payment.provider_operation_id
+    unknown_outcome_handling: >-
+      Persist outcome_unknown and reconcile with the provider before any retry that could
+      duplicate the monetary operation.
+    retry_policy: exponential backoff with a finite per-attempt timeout and operator-visible dead-letter state

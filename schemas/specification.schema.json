@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/specification.schema.json",
+  "title": "StateGuard declarative correctness specification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "project", "scope", "entities", "states", "invariants", "commands", "observations", "external_effects"],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[A-Z][A-Z0-9._-]+$"},
+    "criticality": {"enum": ["critical", "high", "medium", "low"]},
+    "reference": {"type": "string", "minLength": 1},
+    "expression": {
+      "oneOf": [
+        {"type": "string", "minLength": 1},
+        {
+          "type": "object",
+          "required": ["language", "value"],
+          "properties": {
+            "language": {"enum": ["event-b", "cel", "rego", "sql", "smtlib", "natural-language"]},
+            "value": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "required"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "required": {"type": "boolean"},
+        "description": {"type": "string"},
+        "constraints": {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+        "default": {},
+        "sensitive": {"type": "boolean"}
+      }
+    }
+  },
+  "properties": {
+    "version": {"const": 1},
+    "project": {"type": "string", "minLength": 1},
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_type", "assumptions"],
+      "properties": {
+        "product_type": {"type": "string"},
+        "included": {"type": "array", "items": {"type": "string"}},
+        "excluded": {"type": "array", "items": {"type": "string"}},
+        "assumptions": {"type": "array", "items": {"type": "string"}},
+        "threat_model": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "entities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "identity", "fields"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "name": {"type": "string"},
+          "identity": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+          "fields": {"type": "array", "items": {"$ref": "#/$defs/field"}},
+          "aggregate_root": {"type": "boolean"},
+          "tenant_key": {"type": "string"},
+          "version_field": {"type": "string"},
+          "description": {"type": "string"}
+        }
+      }
+    },
+    "states": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "entity", "values", "initial"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "entity": {"$ref": "#/$defs/reference"},
+          "field": {"type": "string"},
+          "values": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+          "initial": {"type": "string"},
+          "terminal": {"type": "array", "items": {"type": "string"}},
+          "unknown_outcome_states": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "invariants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "criticality", "predicate", "rationale"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "title": {"type": "string"},
+          "criticality": {"$ref": "#/$defs/criticality"},
+          "predicate": {"$ref": "#/$defs/expression"},
+          "rationale": {"type": "string"},
+          "scope": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
+          "enforcement": {
+            "type": "array",
+            "items": {"enum": ["event-b-proof", "database-constraint", "transaction", "static-rule", "runtime-assertion", "integration-test", "model-test", "manual-review"]}
+          },
+          "counterexample_template": {"type": "string"},
+          "owner": {"type": "string"}
+        }
+      }
+    },
+    "commands": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "entity", "input", "guards", "outcomes", "atomicity"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "title": {"type": "string"},
+          "entity": {"$ref": "#/$defs/reference"},
+          "input": {"type": "array", "items": {"$ref": "#/$defs/field"}},
+          "guards": {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+          "authorization": {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+          "outcomes": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "object",
+              "required": ["id", "kind", "condition"],
+              "properties": {
+                "id": {"$ref": "#/$defs/identifier"},
+                "kind": {"enum": ["accepted", "rejected", "unknown-outcome"]},
+                "condition": {"$ref": "#/$defs/expression"},
+                "postconditions": {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+                "response": {"type": "string"}
+              },
+              "additionalProperties": false
+            }
+          },
+          "atomicity": {
+            "type": "object",
+            "required": ["required", "strategy"],
+            "properties": {
+              "required": {"type": "boolean"},
+              "strategy": {"enum": ["single-statement", "transaction", "serializable-retry", "constraint", "none"]},
+              "writes": {"type": "array", "items": {"type": "string"}}
+            },
+            "additionalProperties": false
+          },
+          "idempotency": {
+            "type": "object",
+            "properties": {
+              "required": {"type": "boolean"},
+              "key": {"type": "string"},
+              "deduplication_scope": {"type": "string"}
+            },
+            "additionalProperties": false
+          },
+          "effects": {"type": "array", "items": {"$ref": "#/$defs/reference"}},
+          "preserves": {"type": "array", "items": {"$ref": "#/$defs/reference"}}
+        }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "viewer", "projection"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "title": {"type": "string"},
+          "viewer": {"type": "string"},
+          "projection": {"$ref": "#/$defs/expression"},
+          "authorization": {"type": "array", "items": {"$ref": "#/$defs/expression"}},
+          "freshness": {"enum": ["snapshot", "monotonic-version", "eventually-consistent", "best-effort"]},
+          "sensitive_fields": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "external_effects": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "title", "reversibility", "delivery"],
+        "properties": {
+          "id": {"$ref": "#/$defs/identifier"},
+          "title": {"type": "string"},
+          "reversibility": {"enum": ["reversible", "compensatable", "irreversible"]},
+          "delivery": {"enum": ["after-commit", "transactional-outbox", "idempotent-direct", "best-effort"]},
+          "idempotency_key": {"type": "string"},
+          "unknown_outcome_handling": {"type": "string"},
+          "retry_policy": {"type": "string"}
+        }
+      }
+    }
+  }
+}

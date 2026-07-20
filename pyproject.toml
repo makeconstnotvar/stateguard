@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "stateguard-mvp"
+version = "0.1.0"
+description = "StateGuard implementation blueprint and local audit-ledger MVP"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "StateGuard" }]
+dependencies = [
+  "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+validation = ["jsonschema>=4.23,<5"]
+smt = ["z3-solver>=4.13,<5"]
+dev = ["pytest>=8,<9", "ruff>=0.12,<1"]
+
+[project.scripts]
+stateguard = "stateguard.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+stateguard = ["schema.sql", "schemas/*.json"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"

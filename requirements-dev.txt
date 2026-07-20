@@ -1,0 +1,6 @@
+PyYAML>=6.0,<7
+jsonschema>=4.23,<5
+z3-solver>=4.13,<5
+pytest>=8,<10
+ruff>=0.12,<1
+build>=1.2,<2

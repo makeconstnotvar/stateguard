@@ -1,0 +1,176 @@
+version: 1
+project: order-workflow-example
+
+components:
+  - id: client-order-ui
+    kind: ui
+    paths: [client/orders/**]
+    depends_on: [server-order-api]
+  - id: server-order-api
+    kind: api
+    paths: [server/http/orders/**]
+    depends_on: [server-order-domain]
+  - id: server-order-domain
+    kind: domain
+    paths: [server/domain/orders/**]
+    depends_on: [server-order-persistence]
+  - id: server-order-persistence
+    kind: persistence
+    paths: [server/persistence/orders/**]
+    depends_on: [database-order]
+  - id: database-order
+    kind: database
+    paths: [database/migrations/**, database/queries/orders/**]
+    depends_on: []
+  - id: payment-worker
+    kind: worker
+    paths: [workers/payments/**]
+    depends_on: [server-order-domain, database-order]
+
+entities:
+  - id: ENT-ORDER
+    owner: commerce-platform
+    locations:
+      - kind: table
+        selector: public.orders
+      - kind: symbol
+        selector: Order
+        path: server/domain/orders/order.js
+      - kind: symbol
+        selector: OrderStore
+        path: client/orders/OrderStore.js
+  - id: ENT-PAYMENT
+    owner: payments-platform
+    locations:
+      - kind: table
+        selector: public.payments
+      - kind: symbol
+        selector: Payment
+        path: server/domain/payments/payment.js
+
+invariants:
+  - id: INV-ORDER-001
+    owner: commerce-platform
+    locations:
+      - kind: constraint
+        selector: inv_paid_order_requires_payment
+      - kind: symbol
+        selector: markOrderPaid
+        path: server/domain/orders/markOrderPaid.js
+      - kind: test
+        selector: paid order requires matching confirmed payment
+        path: tests/integration/order-payment.test.js
+    evidence_required:
+      - Event-B invariant preservation proof
+      - PostgreSQL integration test with mismatched payment
+      - transaction boundary trace
+  - id: INV-ORDER-002
+    locations:
+      - kind: query
+        selector: update order state with expected old state
+        path: database/queries/orders/update-status.sql
+      - kind: test
+        selector: terminal states cannot transition
+        path: tests/model/order-transitions.test.js
+    evidence_required:
+      - transition graph has no outgoing terminal-state edges
+      - direct writes outside registered command handlers are absent
+  - id: INV-ORDER-003
+    locations:
+      - kind: column
+        selector: public.orders.version
+      - kind: query
+        selector: all order mutations increment version
+        path: database/queries/orders/**
+      - kind: ui-action
+        selector: apply response only when version is monotonic
+        path: client/orders/OrderStore.js
+
+commands:
+  - id: CMD-ORDER-SUBMIT
+    owner: commerce-platform
+    locations:
+      - kind: route
+        selector: POST /orders/:id/submit
+        path: server/http/orders/routes.js
+      - kind: symbol
+        selector: submitOrder
+        path: server/domain/orders/submitOrder.js
+      - kind: query
+        selector: submit_order
+        path: database/queries/orders/submit.sql
+      - kind: ui-action
+        selector: submit
+        path: client/orders/OrderStore.js
+      - kind: test
+        selector: concurrent submit returns one accepted result
+        path: tests/concurrency/order-submit.test.js
+    evidence_required:
+      - decoder dominates handler
+      - authorization dominates database write
+      - SQL WHERE contains old state and expected version
+      - zero-row update maps to typed rejection
+  - id: CMD-ORDER-MARK-PAID
+    owner: payments-platform
+    locations:
+      - kind: job
+        selector: payment-confirmation-worker
+        path: workers/payments/confirm.js
+      - kind: symbol
+        selector: markOrderPaid
+        path: server/domain/orders/markOrderPaid.js
+      - kind: query
+        selector: mark_order_paid
+        path: database/queries/orders/mark-paid.sql
+      - kind: test
+        selector: payment and order invariants survive concurrency
+        path: tests/concurrency/order-payment.test.js
+
+observations:
+  - id: OBS-ORDER-DETAIL
+    locations:
+      - kind: route
+        selector: GET /orders/:id
+        path: server/http/orders/routes.js
+      - kind: query
+        selector: visible_order_detail
+        path: database/queries/orders/detail.sql
+      - kind: symbol
+        selector: applyOrderSnapshot
+        path: client/orders/OrderStore.js
+    evidence_required:
+      - tenant/owner predicate is present in the SQL or enforced RLS policy
+      - sensitive fields are role-filtered
+      - stale response cannot replace a newer version
+
+framework_adapters:
+  - id: express-pg-mobx
+    framework: Express + node-postgres + MobX
+    rules:
+      endpoints:
+        - app.METHOD(path, ...handlers)
+        - router.METHOD(path, ...handlers)
+      validators:
+        - schema.parse
+        - schema.safeParse
+        - validateRequest
+      authorization:
+        - requirePermission
+        - authorize
+      transaction_starts:
+        - withTransaction
+        - client.query('BEGIN')
+      transaction_commits:
+        - client.query('COMMIT')
+      transaction_rollbacks:
+        - client.query('ROLLBACK')
+      database_sinks:
+        - client.query
+        - pool.query
+      external_effects:
+        - fetch
+        - axios.*
+        - mailer.send
+      ui_state_mutations:
+        - runInAction
+        - action

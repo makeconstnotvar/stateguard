@@ -1,0 +1,57 @@
+pipeline {
+  agent { label 'stateguard-linux' }
+  options {
+    timestamps()
+    disableConcurrentBuilds(abortPrevious: true)
+  }
+  environment {
+    SONAR_HOST_URL = credentials('sonar-host-url')
+    SONAR_TOKEN = credentials('sonar-project-token')
+  }
+  stages {
+    stage('Prepare') {
+      steps {
+        sh 'python -m pip install /opt/stateguard/stateguard-implementation-kit'
+        sh 'stateguard scan'
+      }
+    }
+    stage('Fast static checks') {
+      parallel {
+        stage('Native analyzers') { steps { sh './ci/project-fast-checks.sh' } }
+        stage('Semgrep') {
+          steps {
+            sh './scripts/run-semgrep.sh "$WORKSPACE"'
+            sh 'stateguard import-sarif .stateguard/results/semgrep.sarif'
+          }
+        }
+      }
+    }
+    stage('Tests') {
+      steps {
+        sh './ci/project-full-checks.sh'
+        sh './ci/run-database-concurrency-suite.sh'
+      }
+    }
+    stage('Publish main') {
+      when { branch 'main' }
+      steps {
+        sh 'stateguard export-sarif'
+        sh './scripts/run-sonar.sh "$WORKSPACE"'
+        sh './ci/publish-stateguard-summary.sh'
+      }
+    }
+    stage('Deep analysis') {
+      when { triggeredBy 'TimerTrigger' }
+      steps {
+        sh './scripts/run-joern.sh "$WORKSPACE"'
+        sh './ci/run-model-checking.sh'
+        sh 'stateguard doctor --strict'
+      }
+    }
+  }
+  post {
+    always {
+      archiveArtifacts artifacts: '.stateguard/results/**,.stateguard/reports/**', allowEmptyArchive: true
+    }
+  }
+}
