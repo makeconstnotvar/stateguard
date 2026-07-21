@@ -83,6 +83,7 @@ results/
 reports/
 cache/
 work/
+rules/
 """
 
 

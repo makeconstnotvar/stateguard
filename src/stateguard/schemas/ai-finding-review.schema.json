@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/ai-finding-review.schema.json",
+  "title": "StateGuard AI finding review response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["classification", "reasoning_summary", "evidence_refs"],
+  "properties": {
+    "classification": {
+      "enum": [
+        "confirmed-defect",
+        "likely-defect-needs-test",
+        "specification-gap",
+        "mapping-gap",
+        "evidence-gap",
+        "safe-by-identified-mechanism",
+        "false-positive",
+        "accepted-design-tradeoff",
+        "unknown"
+      ]
+    },
+    "reasoning_summary": {"type": "string", "minLength": 1},
+    "counterexample": {"type": ["string", "null"]},
+    "evidence_refs": {"type": "array", "items": {"type": "string"}},
+    "specification_gaps": {"type": "array", "items": {"type": "string"}},
+    "recommended_checks": {"type": "array", "items": {"type": "string"}},
+    "safe_mechanism": {
+      "type": ["string", "null"],
+      "description": "Required by convention when classification=safe-by-identified-mechanism: names the mechanism."
+    },
+    "finding_proposal": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "root_cause": {"type": "string"},
+        "impact": {"type": "string"},
+        "remediation": {"type": "string"},
+        "verification": {"type": "string"}
+      }
+    }
+  }
+}

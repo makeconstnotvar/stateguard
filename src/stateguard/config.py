@@ -41,6 +41,11 @@ class ProjectConfig:
     sonar_project_key: str | None = None
     specification: str = ".stateguard/specification.yaml"
     mappings: str = ".stateguard/mappings.yaml"
+    event_b_project: str | None = None
+    semgrep_rules: list[str] = field(default_factory=list)
+    semgrep_report: str = ".stateguard/results/semgrep.sarif"
+    joern_output: str = ".stateguard/results/joern"
+    joern_languages: list[str] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "ProjectConfig":
@@ -49,6 +54,8 @@ class ProjectConfig:
         review = data.get("review") or {}
         integrations = data.get("integrations") or {}
         spec = data.get("specification") or {}
+        semgrep = integrations.get("semgrep") or {}
+        joern = integrations.get("joern") or {}
 
         key = str(project.get("key") or "").strip()
         if not key:
@@ -65,6 +72,11 @@ class ProjectConfig:
             sonar_project_key=(integrations.get("sonarqube") or {}).get("project_key"),
             specification=str(spec.get("file") or ".stateguard/specification.yaml"),
             mappings=str(spec.get("mappings") or ".stateguard/mappings.yaml"),
+            event_b_project=(str(spec["event_b_project"]) if spec.get("event_b_project") else None),
+            semgrep_rules=[str(x) for x in semgrep.get("rules", [])],
+            semgrep_report=str(semgrep.get("report") or ".stateguard/results/semgrep.sarif"),
+            joern_output=str(joern.get("output") or ".stateguard/results/joern"),
+            joern_languages=[str(x) for x in joern.get("languages", [])],
         )
 
 

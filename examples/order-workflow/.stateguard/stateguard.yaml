@@ -1,0 +1,30 @@
+project:
+  key: order-workflow-example
+  name: Order Workflow Example
+
+scanning:
+  source_roots:
+    - .
+  excludes:
+    - node_modules
+
+review:
+  max_files_per_unit: 80
+  critical_paths:
+    - db/**
+    - server/**
+
+specification:
+  file: specification.yaml
+  mappings: mappings.yaml
+  event_b_project: ../../event-b
+
+integrations:
+  semgrep:
+    report: .stateguard/results/semgrep.sarif
+    rules:
+      - ../../config/semgrep/rules
+  joern:
+    output: .stateguard/results/joern
+    languages:
+      - JAVASCRIPT

@@ -6,19 +6,24 @@ import json
 import sys
 from pathlib import Path
 
+from .ai_review import run_ai_review
 from .apg import import_apg_jsonl
 from .bootstrap import initialize_project
 from .config import load_config
+from .cycle import ALL_STAGES, run_cycle
 from .db import Ledger
 from .errors import StateGuardError
 from .findings import FindingInput, set_finding_status, upsert_finding
+from .obligations import generate_invariant_preservation_obligations
 from .prompt import generate_fix_prompt
 from .proofs import record_proof
 from .repository import discover_repo_root
 from .review import claim_next_unit, complete_unit
+from .rules import sync_semgrep_rules
 from .sarif import export_sarif, import_sarif
 from .scanner import autoplan_review_units, scan_repository
 from .status import collect_status, doctor
+from .test_evidence import record_test_evidence
 from .validation import validate_project
 
 
@@ -37,6 +42,7 @@ def _parser() -> argparse.ArgumentParser:
 
     sub.add_parser("scan", help="Просканировать файлы и инвалидировать устаревшие доказательства")
     sub.add_parser("validate", help="Проверить config, specification, mappings и ссылки")
+    sub.add_parser("sync-rules", help="Скопировать настроенные Semgrep-правила в .stateguard/rules")
 
     plan = sub.add_parser("autoplan", help="Сформировать review units из текущего manifest")
     plan.add_argument("--replace", action="store_true")
@@ -57,6 +63,23 @@ def _parser() -> argparse.ArgumentParser:
     apg_import = sub.add_parser("apg-import", help="Импортировать normalized APG JSONL")
     apg_import.add_argument("path")
     apg_import.add_argument("--source-tool")
+
+    test_evidence = sub.add_parser(
+        "record-test-evidence",
+        help="Записать evidence из TAP-вывода (node --test --test-reporter=tap) в ledger",
+    )
+    test_evidence.add_argument("--tap-file", help="Путь к TAP-выводу; по умолчанию читается stdin")
+    test_evidence.add_argument(
+        "--test-file",
+        action="append",
+        default=[],
+        help="Файл теста для input hashing (можно указать несколько раз)",
+    )
+
+    sub.add_parser(
+        "generate-obligations",
+        help="Породить PO-* proof obligations из specification.yaml (command.preserves)",
+    )
 
     proof = sub.add_parser("proof-record", help="Записать proof attempt и его входные хэши")
     proof.add_argument("--key", required=True)
@@ -112,6 +135,25 @@ def _parser() -> argparse.ArgumentParser:
         "--output", default=".stateguard/reports/fix-prompt.md", help="Путь результата"
     )
 
+    ai_review = sub.add_parser(
+        "ai-review", help="Прогнать открытые findings через DeepSeek (DEEPSEEK_API_KEY)"
+    )
+    ai_review.add_argument("--limit", type=int, default=20)
+    ai_review.add_argument("--finding-id", type=int, default=None)
+
+    cycle = sub.add_parser(
+        "run-cycle",
+        help="Прогнать весь автономный цикл: spec -> semgrep -> joern/APG -> obligations "
+        "-> event-b -> z3 -> ai-review -> tests -> doctor",
+    )
+    cycle.add_argument(
+        "--skip",
+        default="",
+        help=f"Через запятую пропустить стадии из {{{','.join(ALL_STAGES)}}}",
+    )
+    cycle.add_argument("--no-auto-complete-review", action="store_true")
+    cycle.add_argument("--no-strict-doctor", action="store_true")
+
     return parser
 
 
@@ -156,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
             _print(payload, args.json)
             return 0 if result.ok else 2
 
+        if args.command == "sync-rules":
+            config = load_config(repo_root)
+            result = sync_semgrep_rules(repo_root, config)
+            _print(result, args.json)
+            return 0
+
         if args.command == "autoplan":
             config = load_config(repo_root)
             result = autoplan_review_units(repo_root, config, ledger, replace=args.replace)
@@ -182,6 +230,22 @@ def main(argv: list[str] | None = None) -> int:
                 ledger, (repo_root / args.path).resolve(), source_tool=args.source_tool
             )
             _print(result, args.json)
+            return 0
+
+        if args.command == "record-test-evidence":
+            config = load_config(repo_root)
+            spec_path = (repo_root / config.specification).resolve()
+            mapping_path = (repo_root / config.mappings).resolve()
+            tap_text = Path(args.tap_file).read_text(encoding="utf-8") if args.tap_file else sys.stdin.read()
+            input_paths = [(repo_root / path).resolve() for path in args.test_file]
+            result = record_test_evidence(ledger, spec_path, mapping_path, tap_text, input_paths)
+            _print(result, args.json)
+            return 0
+
+        if args.command == "generate-obligations":
+            config = load_config(repo_root)
+            keys = generate_invariant_preservation_obligations(repo_root, config, ledger)
+            _print({"obligations": keys}, args.json)
             return 0
 
         if args.command == "proof-record":
@@ -258,6 +322,33 @@ def main(argv: list[str] | None = None) -> int:
             count = generate_fix_prompt(ledger, output)
             _print({"findings": count, "output": str(output)}, args.json)
             return 0
+
+        if args.command == "ai-review":
+            config = load_config(repo_root)
+            spec_path = (repo_root / config.specification).resolve()
+            result = run_ai_review(
+                ledger, repo_root, spec_path, limit=args.limit, finding_id=args.finding_id
+            )
+            _print(result, args.json)
+            return 0
+
+        if args.command == "run-cycle":
+            skip = frozenset(item.strip() for item in args.skip.split(",") if item.strip())
+            report = run_cycle(
+                repo_root,
+                skip=skip,
+                auto_complete_review=not args.no_auto_complete_review,
+                strict_doctor=not args.no_strict_doctor,
+            )
+            payload = {
+                "stages": [
+                    {"name": stage.name, "status": stage.status, "message": stage.message}
+                    for stage in report.stages
+                ],
+                "doctor": report.doctor,
+            }
+            _print(payload, args.json)
+            return 0 if report.doctor and report.doctor["ok"] else 2
 
         raise StateGuardError(f"Неизвестная команда: {args.command}")
     except StateGuardError as exc:

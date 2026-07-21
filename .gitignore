@@ -41,3 +41,10 @@ workspace/
 .env
 .env.local
 *.env.local
+
+# Build output — release wheel is committed intentionally as part of the kit;
+# ignore anything else that lands in dist/ from local rebuilds
+dist/*
+!dist/stateguard_mvp-0.1.0-py3-none-any.whl
+
+sonarqube

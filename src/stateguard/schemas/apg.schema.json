@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/stateguard/apg.schema.json",
+  "title": "StateGuard Application Property Graph record (one JSONL line)",
+  "description": "Validates a single node or edge record from a normalized APG JSONL file (docs/08-joern-and-application-property-graph.md). One file mixes node and edge records; validate line by line.",
+  "oneOf": [
+    {"$ref": "#/$defs/node"},
+    {"$ref": "#/$defs/edge"}
+  ],
+  "$defs": {
+    "nodeType": {
+      "enum": [
+        "Repository", "Component", "File", "Symbol", "Function", "Method", "Call",
+        "Endpoint", "Input", "Decoder", "Validator", "AuthorizationCheck",
+        "Command", "Outcome", "Guard", "Transaction", "Query",
+        "Table", "Column", "Constraint", "Index", "Trigger",
+        "DomainEntity", "State", "Transition", "Invariant", "Observation",
+        "ExternalEffect", "OutboxOperation", "UIAction", "UIState",
+        "Test", "Migration", "ProofObligation", "Finding"
+      ]
+    },
+    "edgeType": {
+      "enum": [
+        "CONTAINS", "DECLARES", "CALLS", "FLOWS_TO", "CONTROL_DOMINATES", "RETURNS",
+        "VALIDATED_BY", "AUTHORIZED_BY", "IMPLEMENTS", "REFINES", "READS", "WRITES",
+        "GUARDED_BY", "STARTS_TRANSACTION", "PART_OF_TRANSACTION", "COMMITS_BEFORE",
+        "EMITS_EFFECT", "OBSERVED_BY", "ENFORCES", "TESTED_BY", "PROVES",
+        "INVALIDATES", "DEPENDS_ON"
+      ]
+    },
+    "node": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "externalId", "type", "sourceTool", "properties"],
+      "properties": {
+        "kind": {"const": "node"},
+        "externalId": {"type": "string", "minLength": 1},
+        "type": {"$ref": "#/$defs/nodeType"},
+        "name": {"type": ["string", "null"]},
+        "artifactPath": {"type": "string"},
+        "range": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["startLine", "endLine"],
+          "properties": {
+            "startLine": {"type": "integer", "minimum": 1},
+            "endLine": {"type": "integer", "minimum": 1}
+          }
+        },
+        "sourceTool": {"type": "string", "minLength": 1},
+        "sourceHash": {"type": "string"},
+        "properties": {"type": "object"}
+      }
+    },
+    "edge": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "externalId", "type", "source", "target", "sourceTool", "properties"],
+      "properties": {
+        "kind": {"const": "edge"},
+        "externalId": {"type": "string", "minLength": 1},
+        "type": {"$ref": "#/$defs/edgeType"},
+        "source": {"type": "string", "minLength": 1},
+        "target": {"type": "string", "minLength": 1},
+        "sourceTool": {"type": "string", "minLength": 1},
+        "properties": {"type": "object"}
+      }
+    }
+  }
+}
