@@ -1,0 +1,8 @@
+audit.db
+audit.db-shm
+audit.db-wal
+results/
+reports/
+cache/
+work/
+rules/

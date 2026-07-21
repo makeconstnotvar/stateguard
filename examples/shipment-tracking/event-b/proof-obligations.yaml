@@ -1,0 +1,60 @@
+version: 1
+model: ShipmentTracking
+model_kind: classical-b-prob-smoke
+production_model: Rodin Event-B refinement chain
+links:
+  - model_predicate: >-
+      every processed (shipment, event) pair's recorded sequence number never exceeds
+      that shipment's current last_sequence (upper-bound safety property; the DB trigger
+      in db/schema.sql enforces the stronger exact-equality version — last_sequence
+      equals the highest recorded sequence_no — which this bounded model approximates
+      for tractability). event_sequence is keyed by the (SHIPMENT, EVENT) couple, not by
+      EVENT alone, mirroring db/schema.sql's UNIQUE(shipment_id, provider_event_id)
+      compound key — an adversarial review of an earlier version of this model found
+      that a global EVENT-only keying let a second shipment silently overwrite the first
+      shipment's own record for the same event constant, which the invariant as
+      originally stated did not catch; fixed by keying event_sequence on the pair.
+    specification_id: INV-SHIP-001
+    obligations:
+      - PO-INV-SHIP-001-BY-CMD-SHIPMENT-CREATE
+      - PO-INV-SHIP-001-BY-CMD-SHIPMENT-RECORD-CHECKPOINT
+  - model_predicate: >-
+      an (s, e) pair already present in the processed relation causes record_checkpoint
+      to take the first IF branch (skip — no state change) for shipment s specifically;
+      the same event constant e remains independently usable by a different shipment
+      (processed is a SHIPMENT <-> EVENT relation, not a partial function on EVENT),
+      matching the real schema's per-shipment uniqueness rather than a global one
+    specification_id: INV-SHIP-002
+    obligations:
+      - PO-INV-SHIP-002-BY-CMD-SHIPMENT-RECORD-CHECKPOINT
+  - model_operation: record_checkpoint
+    specification_id: INV-SHIP-003
+    note: >-
+      Terminal-state guard (status(s) : {delivered, exception} => skip) makes
+      irreversibility structural rather than a separate INVARIANT clause. This is NOT
+      the same mechanism OrderWorkflow.mch uses (an earlier version of this note
+      incorrectly claimed it was): OrderWorkflow.mch's operations are simply disabled
+      outside their PRE guard (e.g. mark_paid's PRE requires status(o) = submitted) —
+      there is no internally-branching always-enabled operation there. ShipmentTracking's
+      record_checkpoint is always enabled and branches to skip internally instead,
+      because a real carrier webhook cannot be "disabled" the way a command call can —
+      it must always receive some response (accepted, no-op, or rejected).
+    obligations:
+      - PO-INV-SHIP-003-BY-CMD-SHIPMENT-CREATE
+      - PO-INV-SHIP-003-BY-CMD-SHIPMENT-RECORD-CHECKPOINT
+  - model_predicate: >-
+      the final ELSIF's negated disjunction (status(s)=pending & code:{in_transit,exception})
+      or (status(s)=in_transit & code:{out_for_delivery,exception}) or
+      (status(s)=out_for_delivery & code:{delivered,exception}) — routes any code outside
+      the valid FSM edge for the shipment's current status to skip rather than ELSE
+    specification_id: INV-SHIP-004
+    obligations:
+      - PO-INV-SHIP-004-BY-CMD-SHIPMENT-RECORD-CHECKPOINT
+required_export:
+  - tool_version
+  - model_sha256
+  - command
+  - preferences_and_bounds
+  - result
+  - explored_states
+  - counterexample_trace

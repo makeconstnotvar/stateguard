@@ -1,6 +1,6 @@
 project:
-  key: order-workflow-example
-  name: Order Workflow Example
+  key: shipment-tracking-example
+  name: Shipment Tracking Example
 
 scanning:
   source_roots:
@@ -17,7 +17,7 @@ review:
 specification:
   file: specification.yaml
   mappings: mappings.yaml
-  event_b_project: ../../event-b
+  event_b_project: event-b
 
 integrations:
   semgrep:
@@ -30,5 +30,5 @@ integrations:
       - JAVASCRIPT
   native_analyzers:
     - tool: eslint
-      targets: [server, client, tests]
+      targets: [server, tests]
       report: .stateguard/results/eslint.sarif

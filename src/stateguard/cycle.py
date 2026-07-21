@@ -16,6 +16,7 @@ from .bootstrap import GITIGNORE_TEMPLATE
 from .config import ProjectConfig, load_config
 from .db import Ledger
 from .joern_adapter import build_apg, write_apg_jsonl
+from .native_analyzers import run_native_analyzers
 from .obligations import generate_invariant_preservation_obligations
 from .probcli_parser import parse_prob_output
 from .proofs import record_proof
@@ -32,6 +33,7 @@ ALL_STAGES = (
     "validate",
     "scan",
     "semgrep",
+    "native-analyzers",
     "joern",
     "obligations",
     "event-b",
@@ -148,6 +150,24 @@ def _stage_semgrep(repo_root: Path, config: ProjectConfig, ledger: Ledger, repor
         report.stages.append(StageResult("semgrep", "ok", f"{imported['imported']} finding(s) imported"))
     else:
         report.stages.append(StageResult("semgrep", "ok", "ran, no SARIF output produced"))
+
+
+def _stage_native_analyzers(
+    repo_root: Path, config: ProjectConfig, ledger: Ledger, report: CycleReport
+) -> None:
+    if not config.native_analyzers:
+        report.stages.append(
+            StageResult("native-analyzers", "skipped", "SKIPPED: integrations.native_analyzers not configured")
+        )
+        return
+
+    results = run_native_analyzers(repo_root, ledger, config)
+    any_failed = any(item["status"] == "failed" for item in results)
+    parts = []
+    for item in results:
+        detail = f"{item['imported']} imported" if "imported" in item else item.get("message", "")
+        parts.append(f"{item['tool']}: {item['status']} ({detail})")
+    report.stages.append(StageResult("native-analyzers", "failed" if any_failed else "ok", "; ".join(parts)))
 
 
 def _stage_joern_and_apg(
@@ -368,6 +388,8 @@ def run_cycle(
         _stage_scan_and_review(repo_root, config, ledger, report, auto_complete_review)
     if "semgrep" not in skip:
         _stage_semgrep(repo_root, config, ledger, report)
+    if "native-analyzers" not in skip:
+        _stage_native_analyzers(repo_root, config, ledger, report)
     if "joern" not in skip:
         _stage_joern_and_apg(repo_root, ledger, spec_path, mapping_path, config, report)
     if "obligations" not in skip:

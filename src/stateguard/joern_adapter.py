@@ -31,8 +31,12 @@ _LOCATION_KIND_TO_NODE_TYPE = {
 
 _SECTION_NODE_TYPE = {
     "entities": "DomainEntity",
-    "invariants": "Invariant",
+    # commands before invariants: a query/symbol file mapped from both sides (a
+    # command's own definition plus an invariant citing it as evidence) must let the
+    # command's short identifier win the shared node's display name, not the
+    # invariant's descriptive sentence — see _location_external_id's path-only IDs.
     "commands": "Command",
+    "invariants": "Invariant",
     "observations": "Observation",
 }
 _SECTION_PREFIX = {
@@ -47,6 +51,13 @@ _SECTION_PREFIX = {
 # file == one named query, by this codebase's convention).
 _SELECTOR_ONLY_KINDS = {"table", "column", "constraint", "route"}
 _PATH_ONLY_KINDS = {"query", "file"}
+
+# Invariant-section location kinds that represent an actual enforcement mechanism — code
+# or DB config that rejects/blocks a violating state — as opposed to a kind that merely
+# references structural data (`table`, `column`) or a bare location tag (`route`, `file`)
+# without itself doing any enforcing. `test` is deliberately excluded: it gets the more
+# specific TESTED_BY edge instead of ENFORCES.
+_ENFORCING_KINDS = {"constraint", "symbol", "query", "index", "job", "ui-action", "event-b-element"}
 
 
 def _location_external_id(kind: str, path: str | None, selector: str) -> str:
@@ -141,6 +152,14 @@ def _transaction_wrapper_selectors(mapping: dict[str, Any]) -> set[str]:
     return selectors
 
 
+def _decoder_selectors(mapping: dict[str, Any]) -> set[str]:
+    selectors: set[str] = set()
+    for adapter in mapping.get("framework_adapters") or []:
+        rules = adapter.get("rules") or {}
+        selectors.update(rules.get("decoders") or [])
+    return selectors
+
+
 def build_apg(
     repo_root: Path,
     ledger: Ledger,
@@ -152,6 +171,7 @@ def build_apg(
     mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8")) or {}
     joern_export = _load_joern_export(joern_dir)
     transaction_wrappers = _transaction_wrapper_selectors(mapping)
+    decoders = _decoder_selectors(mapping)
 
     records: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -226,7 +246,13 @@ def build_apg(
                     )
                 )
 
-                if section == "invariants" and kind == "constraint":
+                # Any invariant-section location whose kind is an actual enforcement
+                # mechanism enforces that invariant, not just `constraint` — a query guard
+                # or a symbol's branch logic is just as much enforcement as a DB CHECK, and
+                # previously got no inbound edge at all. Structural-reference kinds like
+                # `table`/`column` are excluded: citing a column doesn't enforce anything
+                # about it.
+                if section == "invariants" and kind in _ENFORCING_KINDS:
                     add(_edge(f"edge:{loc_id}->ENFORCES->{spec_node_id}", "ENFORCES", loc_id, spec_node_id))
                 if section == "commands" and kind == "query":
                     add(_edge(f"edge:{spec_node_id}->CALLS->{loc_id}", "CALLS", spec_node_id, loc_id))
@@ -238,7 +264,10 @@ def build_apg(
     # Pass 2: WRITES and PART_OF_TRANSACTION edges need specification.yaml's
     # atomicity.writes/strategy plus the transaction-wrapper locations resolved above,
     # so they're derived from the command's *handler* symbol specifically — the symbol
-    # location that is neither a decoder (`decode*`) nor a known transaction wrapper.
+    # location that is neither a declared decoder nor a known transaction wrapper.
+    # Decoder role is config-driven (framework_adapters[].rules.decoders), mirroring
+    # transaction_starts, rather than inferred from a `decode*` naming convention: a
+    # project's input decoder/validator function is not guaranteed to be named that way.
     for command in specification.get("commands") or []:
         command_id = command.get("id")
         atomicity = command.get("atomicity") or {}
@@ -248,8 +277,7 @@ def build_apg(
         handlers = [
             location
             for location in symbol_locations
-            if location["selector"] not in transaction_wrappers
-            and not location["selector"].lower().startswith("decode")
+            if location["selector"] not in transaction_wrappers and location["selector"] not in decoders
         ]
         wrappers = [location for location in symbol_locations if location["selector"] in transaction_wrappers]
 

@@ -1,5 +1,5 @@
 {
-  "name": "stateguard-order-workflow-example",
+  "name": "stateguard-shipment-tracking-example",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,7 +7,6 @@
     "lint": "eslint ."
   },
   "dependencies": {
-    "mobx": "^6.13.0",
     "pg": "^8.13.0"
   },
   "devDependencies": {

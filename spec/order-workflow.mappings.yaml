@@ -148,6 +148,8 @@ framework_adapters:
       authorization:
         - requirePermission
         - authorize
+      decoders:
+        - decodeSubmitOrder
       transaction_starts:
         - withTransaction
         - withSerializableRetry

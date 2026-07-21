@@ -46,6 +46,7 @@ class ProjectConfig:
     semgrep_report: str = ".stateguard/results/semgrep.sarif"
     joern_output: str = ".stateguard/results/joern"
     joern_languages: list[str] = field(default_factory=list)
+    native_analyzers: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> "ProjectConfig":
@@ -77,6 +78,7 @@ class ProjectConfig:
             semgrep_report=str(semgrep.get("report") or ".stateguard/results/semgrep.sarif"),
             joern_output=str(joern.get("output") or ".stateguard/results/joern"),
             joern_languages=[str(x) for x in joern.get("languages", [])],
+            native_analyzers=[dict(x) for x in integrations.get("native_analyzers", [])],
         )
 
 

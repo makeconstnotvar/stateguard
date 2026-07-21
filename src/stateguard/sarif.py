@@ -11,13 +11,22 @@ from .findings import FindingInput, list_open_findings, upsert_finding
 from .util import atomic_write, stable_hash
 
 
-def _uri_to_path(uri: str) -> str:
+def _uri_to_path(uri: str, repo_root: Path | None = None) -> str:
     parsed = urlparse(uri)
     if parsed.scheme == "file":
         value = unquote(parsed.path)
         if value.startswith("/") and len(value) > 3 and value[2] == ":":
             value = value[1:]
-        return value.replace("\\", "/")
+        value = value.replace("\\", "/")
+        # Some tools (e.g. ruff's SARIF output) always emit absolute file:// URIs
+        # regardless of invocation cwd. Relativize against repo_root when possible so
+        # file_path matches the artifacts table's repo-relative paths.
+        if repo_root is not None and value.startswith("/"):
+            try:
+                return Path(value).resolve().relative_to(repo_root.resolve()).as_posix()
+            except ValueError:
+                pass
+        return value
     return unquote(uri).replace("\\", "/").lstrip("./")
 
 
@@ -62,7 +71,7 @@ def import_sarif(ledger: Ledger, path: Path, *, run_id: int | None = None) -> di
                 artifact = physical.get("artifactLocation") or {}
                 region = physical.get("region") or {}
                 if artifact.get("uri"):
-                    file_path = _uri_to_path(str(artifact["uri"]))
+                    file_path = _uri_to_path(str(artifact["uri"]), ledger.repo_root)
                 start_line = region.get("startLine")
                 start_column = region.get("startColumn")
                 end_line = region.get("endLine")

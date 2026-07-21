@@ -1,0 +1,245 @@
+version: 1
+project: shipment-tracking-example
+
+scope:
+  product_type: business-application
+  included:
+    - shipment checkpoint ingestion from carrier webhooks
+    - idempotent replay handling for redelivered webhook events
+    - out-of-order/skewed webhook delivery rejection
+  excluded:
+    - carrier webhook signature verification/authentication
+    - shipment creation business rules beyond order-uniqueness
+  assumptions:
+    - The carrier assigns a per-shipment monotonically increasing sequence_no to every webhook event.
+    - The carrier assigns a provider_event_id to every webhook event that is stable and unique across redelivery.
+    - Webhook delivery is at-least-once — the same event may arrive more than once, and events may arrive out of relative order under load.
+  threat_model:
+    - duplicate/redelivered webhook events
+    - out-of-order or skewed webhook delivery
+    - concurrent webhook deliveries for the same shipment
+    - malformed webhook payloads
+
+entities:
+  - id: ENT-SHIPMENT
+    name: Shipment
+    aggregate_root: true
+    identity: [id]
+    fields:
+      - name: id
+        type: uuid
+        required: true
+      - name: order_id
+        type: uuid
+        required: true
+      - name: status
+        type: shipment-status
+        required: true
+      - name: last_sequence
+        type: integer
+        required: true
+        constraints:
+          - 'last_sequence >= 0'
+      - name: created_at
+        type: timestamp
+        required: true
+    description: >-
+      No version field: atomicity is pessimistic-lock (SELECT ... FOR UPDATE), not an
+      optimistic version-guard, so there is no compare-and-swap counter to maintain.
+
+  - id: ENT-CHECKPOINT
+    name: Checkpoint
+    aggregate_root: true
+    identity: [id]
+    fields:
+      - name: id
+        type: uuid
+        required: true
+      - name: shipment_id
+        type: uuid
+        required: true
+      - name: provider_event_id
+        type: string
+        required: true
+      - name: sequence_no
+        type: integer
+        required: true
+      - name: code
+        type: checkpoint-code
+        required: true
+      - name: recorded_at
+        type: timestamp
+        required: true
+    description: Append-only log of accepted carrier checkpoints; never updated, only inserted.
+
+states:
+  - id: STATE-SHIPMENT
+    entity: ENT-SHIPMENT
+    field: status
+    values: [pending, in_transit, out_for_delivery, delivered, exception]
+    initial: pending
+    terminal: [delivered, exception]
+
+invariants:
+  - id: INV-SHIP-001
+    title: Checkpoints are applied only in strictly increasing carrier sequence order
+    criticality: critical
+    scope: [ENT-SHIPMENT, ENT-CHECKPOINT]
+    predicate:
+      language: natural-language
+      value: >-
+        A checkpoint is accepted only if its sequence_no is strictly greater than the
+        shipment's current last_sequence; upon acceptance, last_sequence becomes exactly
+        the accepted checkpoint's sequence_no.
+    rationale: >-
+      Prevents a stale or network-skewed carrier callback from overwriting a later-known
+      shipment status with older information.
+    enforcement:
+      - event-b-proof
+      - database-constraint
+      - transaction
+      - integration-test
+    counterexample_template: >-
+      A checkpoint with sequence_no less than or equal to the shipment's last_sequence is
+      applied, moving last_sequence backward or leaving a newer status incorrectly reverted.
+
+  - id: INV-SHIP-002
+    title: A given provider_event_id is applied at most once per shipment
+    criticality: critical
+    scope: [ENT-CHECKPOINT]
+    predicate: >-
+      count(checkpoint where checkpoint.shipment_id = s.id and checkpoint.provider_event_id
+      = e) <= 1 for every shipment s and event id e; replaying an already-seen
+      (shipment_id, provider_event_id) is a no-op, not a rejection and not a second mutation.
+    rationale: >-
+      Carrier at-least-once delivery must not double-apply a transition or double-record a
+      checkpoint when the same webhook is redelivered.
+    enforcement:
+      - database-constraint
+      - transaction
+      - integration-test
+    counterexample_template: >-
+      The same provider_event_id is recorded twice for one shipment, or replaying an
+      already-seen event mutates shipment state a second time instead of no-op'ing.
+
+  - id: INV-SHIP-003
+    title: Terminal shipment states are irreversible
+    criticality: high
+    scope: [STATE-SHIPMENT]
+    predicate: 'status in {delivered, exception} implies next(status) = status'
+    rationale: Prevents resurrecting a delivered or failed shipment via a later checkpoint.
+    enforcement:
+      - event-b-proof
+      - static-rule
+      - transaction
+      - model-test
+
+  - id: INV-SHIP-004
+    title: Checkpoint codes only transition the shipment along valid FSM edges
+    criticality: high
+    scope: [STATE-SHIPMENT]
+    predicate: >-
+      Every accepted checkpoint's code is a member of allowed_next(shipment.status):
+      allowed_next(pending)={in_transit,exception}, allowed_next(in_transit)=
+      {out_for_delivery,exception}, allowed_next(out_for_delivery)={delivered,exception}.
+    rationale: >-
+      Prevents a webhook from skipping physically impossible carrier states (e.g. pending
+      directly to delivered) even when its sequence_no and idempotency checks otherwise pass.
+    enforcement:
+      - static-rule
+      - transaction
+      - model-test
+
+commands:
+  - id: CMD-SHIPMENT-CREATE
+    title: Create a shipment for an order
+    entity: ENT-SHIPMENT
+    input:
+      - name: order_id
+        type: uuid
+        required: true
+    guards:
+      - 'not exists(shipment where shipment.order_id = order_id)'
+    authorization:
+      - 'actor.kind = trusted-fulfillment-service'
+    outcomes:
+      - id: OUT-SHIPMENT-CREATE-ACCEPTED
+        kind: accepted
+        condition: 'not exists(shipment where shipment.order_id = order_id)'
+        postconditions:
+          - 'shipment.status = pending'
+          - 'shipment.last_sequence = 0'
+        response: accepted with the new shipment snapshot
+      - id: OUT-SHIPMENT-CREATE-DUPLICATE
+        kind: rejected
+        condition: 'exists(shipment where shipment.order_id = order_id)'
+        response: duplicate_shipment
+    atomicity:
+      required: true
+      strategy: single-statement
+      writes:
+        - shipments.id
+        - shipments.status
+        - shipments.last_sequence
+    preserves: [INV-SHIP-001, INV-SHIP-003]
+
+  - id: CMD-SHIPMENT-RECORD-CHECKPOINT
+    title: Record a carrier webhook checkpoint
+    entity: ENT-SHIPMENT
+    input:
+      - name: shipment_id
+        type: uuid
+        required: true
+      - name: provider_event_id
+        type: string
+        required: true
+      - name: sequence_no
+        type: integer
+        required: true
+      - name: code
+        type: checkpoint-code
+        required: true
+    guards:
+      - 'sequence_no > shipment.last_sequence'
+      - 'code in allowed_next(shipment.status), where allowed_next(pending)={in_transit,exception}, allowed_next(in_transit)={out_for_delivery,exception}, allowed_next(out_for_delivery)={delivered,exception}'
+    authorization:
+      - 'actor.kind = trusted-carrier-webhook'
+    outcomes:
+      - id: OUT-SHIPMENT-CHECKPOINT-DUPLICATE
+        kind: accepted
+        condition: 'exists(checkpoint where checkpoint.shipment_id = shipment_id and checkpoint.provider_event_id = provider_event_id)'
+        response: idempotent acknowledgement of the previously recorded outcome — no mutation
+      - id: OUT-SHIPMENT-CHECKPOINT-WRONG-STATE
+        kind: rejected
+        condition: 'not duplicate and shipment.status in {delivered, exception}'
+        response: wrong_state
+      - id: OUT-SHIPMENT-CHECKPOINT-OUT-OF-ORDER
+        kind: rejected
+        condition: 'not duplicate and shipment.status not in {delivered, exception} and sequence_no <= shipment.last_sequence'
+        response: out_of_order with current last_sequence
+      - id: OUT-SHIPMENT-CHECKPOINT-INVALID-TRANSITION
+        kind: rejected
+        condition: 'not duplicate and sequence_no > shipment.last_sequence and code not in allowed_next(shipment.status)'
+        response: invalid_transition
+      - id: OUT-SHIPMENT-CHECKPOINT-ACCEPTED
+        kind: accepted
+        condition: 'not duplicate and sequence_no > shipment.last_sequence and code in allowed_next(shipment.status)'
+        postconditions:
+          - 'shipment.status = code'
+          - 'shipment.last_sequence = sequence_no'
+        response: accepted with the new shipment status
+    atomicity:
+      required: true
+      strategy: pessimistic-lock
+      writes:
+        - shipments.status
+        - shipments.last_sequence
+        - checkpoints.sequence_no
+    idempotency:
+      required: true
+      key: provider_event_id
+      deduplication_scope: shipment checkpoint ingestion
+    preserves: [INV-SHIP-001, INV-SHIP-002, INV-SHIP-003, INV-SHIP-004]
+
+observations: []
+external_effects: []

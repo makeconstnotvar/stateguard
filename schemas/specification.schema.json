@@ -144,7 +144,7 @@
             "required": ["required", "strategy"],
             "properties": {
               "required": {"type": "boolean"},
-              "strategy": {"enum": ["single-statement", "transaction", "serializable-retry", "constraint", "none"]},
+              "strategy": {"enum": ["single-statement", "transaction", "serializable-retry", "pessimistic-lock", "constraint", "none"]},
               "writes": {"type": "array", "items": {"type": "string"}}
             },
             "additionalProperties": false

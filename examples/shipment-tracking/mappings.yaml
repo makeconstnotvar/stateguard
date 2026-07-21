@@ -1,0 +1,190 @@
+version: 1
+project: shipment-tracking-example
+
+components:
+  - id: server-shipment-domain
+    kind: domain
+    paths: [server/**]
+    depends_on: [database-shipment]
+  - id: database-shipment
+    kind: database
+    paths: [db/**]
+    depends_on: []
+
+entities:
+  - id: ENT-SHIPMENT
+    owner: fulfillment-platform
+    locations:
+      - kind: table
+        selector: public.shipments
+      - kind: symbol
+        selector: createShipment
+        path: server/create-shipment.js
+        notes: No standalone Shipment class exists; shipment state is the public.shipments row.
+
+  - id: ENT-CHECKPOINT
+    owner: fulfillment-platform
+    locations:
+      - kind: table
+        selector: public.checkpoints
+        notes: Append-only log — rows are inserted, never updated or deleted, unlike ENT-ORDER/ENT-PAYMENT in examples/order-workflow.
+
+invariants:
+  - id: INV-SHIP-001
+    owner: fulfillment-platform
+    locations:
+      - kind: constraint
+        selector: inv_ship_last_sequence_matches_checkpoints
+        path: db/schema.sql
+        notes: >-
+          Deferred constraint trigger (assert_shipment_sequence_matches_checkpoints);
+          raises ERRCODE 23514 with this constraint name, asserted directly in
+          tests/shipment.test.js. Enforces the DB half of the invariant; the
+          application-level guard (sequence_no > last_sequence, evaluated under
+          withRowLock) enforces the other half.
+      - kind: symbol
+        selector: recordCheckpoint
+        path: server/record-checkpoint.js
+      - kind: test
+        selector: checkpoint with sequence_no not greater than last_sequence is rejected as out_of_order
+        path: tests/shipment.test.js
+      - kind: test
+        selector: deferred database invariant rejects a shipment whose last_sequence does not match its checkpoints
+        path: tests/shipment.test.js
+    evidence_required:
+      - Event-B invariant preservation proof
+      - PostgreSQL integration test with an out-of-order sequence_no
+      - transaction boundary trace under a row lock
+
+  - id: INV-SHIP-002
+    owner: fulfillment-platform
+    locations:
+      - kind: constraint
+        selector: inv_checkpoint_event_once_per_shipment
+        path: db/schema.sql
+        notes: Plain UNIQUE(shipment_id, provider_event_id) constraint — simpler than INV-SHIP-001's deferred trigger since this is a single-row uniqueness property, not a cross-row aggregate.
+      - kind: symbol
+        selector: recordCheckpoint
+        path: server/record-checkpoint.js
+        notes: >-
+          The duplicate provider_event_id check runs inline here, under the row lock;
+          not mapped as a separate `kind: query` location because it is not a standalone
+          query file — joern_adapter.py's "query" kind is path-only-identified (one file
+          == one named query), so pointing it at a multi-statement .js handler would
+          collide with other query locations for the same file.
+      - kind: test
+        selector: "two concurrent identical webhook deliveries: exactly one mutates, one no-ops"
+        path: tests/shipment.test.js
+      - kind: test
+        selector: replaying an already-applied event after further progress still no-ops without reverting state
+        path: tests/shipment.test.js
+    evidence_required:
+      - concurrent identical-event replay resolves deterministically under the row lock
+      - replay after further progress does not revert shipment state
+
+  - id: INV-SHIP-003
+    owner: fulfillment-platform
+    locations:
+      - kind: symbol
+        selector: recordCheckpoint
+        path: server/record-checkpoint.js
+        notes: >-
+          Not mapped via `kind: query` against db/apply-checkpoint.sql: that statement
+          (see db/apply-checkpoint.sql) carries no terminal-state WHERE guard of its own —
+          the `status IN (delivered, exception)` rejection is evaluated in JS before the
+          query ever runs, so the symbol location is the accurate evidence site, not the
+          query file. (An earlier version of this note cited a joern_adapter.py query-kind
+          ID collision as the reason; that adapter limitation was fixed by processing
+          commands before invariants — see IMPLEMENTATION-MASTER-PLAN.md — so this is no
+          longer why the query kind is skipped here.)
+      - kind: test
+        selector: checkpoint on a terminal shipment is rejected as wrong_state
+        path: tests/shipment.test.js
+    evidence_required:
+      - transition graph has no outgoing terminal-state edges
+      - direct writes outside registered command handlers are absent
+
+  - id: INV-SHIP-004
+    owner: fulfillment-platform
+    locations:
+      - kind: symbol
+        selector: recordCheckpoint
+        path: server/record-checkpoint.js
+        notes: Enforced via the ALLOWED_NEXT lookup table and the invalid_transition rejection branch.
+      - kind: test
+        selector: checkpoint code outside allowed_next(status) is rejected as invalid_transition
+        path: tests/shipment.test.js
+    evidence_required:
+      - model-test enumerating all (status, code) pairs against ALLOWED_NEXT
+      - Z3 proof that an accepted transition's resulting status is always status_pre or a member of allowed_next(status_pre)
+
+commands:
+  - id: CMD-SHIPMENT-CREATE
+    owner: fulfillment-platform
+    locations:
+      - kind: symbol
+        selector: createShipment
+        path: server/create-shipment.js
+      - kind: query
+        selector: create_shipment
+        path: db/create-shipment.sql
+    evidence_required:
+      - SQL WHERE NOT EXISTS guard prevents duplicate shipments per order
+
+  - id: CMD-SHIPMENT-RECORD-CHECKPOINT
+    owner: fulfillment-platform
+    locations:
+      - kind: symbol
+        selector: parseCarrierWebhook
+        path: server/webhook-parser.js
+        notes: >-
+          Input decoder/validator for CMD-SHIPMENT-RECORD-CHECKPOINT, playing the exact
+          same role as examples/order-workflow's decodeSubmitOrder — but NOT named with a
+          "decode" prefix, unlike that example. This was deliberately left unnamed-as-such
+          to surface a real gap: joern_adapter.py's Pass 2 handler-detection originally
+          hardcoded a `.lower().startswith("decode")` naming check instead of reading a
+          role from mappings.yaml, so this symbol was misclassified as a command *handler*
+          and got an incorrect WRITES edge in the generated APG. Fixed in joern_adapter.py
+          by adding a `framework_adapters[].rules.decoders` list mirroring
+          transaction_starts (see IMPLEMENTATION-MASTER-PLAN.md); this location is now
+          declared under that list below instead of being renamed, proving the fix closes
+          the gap without forcing a naming convention on the target codebase.
+      - kind: symbol
+        selector: recordCheckpoint
+        path: server/record-checkpoint.js
+      - kind: symbol
+        selector: withRowLock
+        path: server/locking.js
+      - kind: query
+        selector: apply_checkpoint
+        path: db/apply-checkpoint.sql
+    evidence_required:
+      - duplicate check runs before any ordering/transition guard
+      - SELECT ... FOR UPDATE serializes concurrent checkpoint recording for one shipment
+      - guard evaluation and writes happen under the same row lock
+
+observations: []
+
+framework_adapters:
+  - id: pg-pessimistic-lock
+    framework: node-postgres (pessimistic locking)
+    rules:
+      endpoints:
+        - app.post('/webhooks/carrier', ...)
+      validators:
+        - parseCarrierWebhook
+      authorization:
+        - requireTrustedWebhookSource
+      decoders:
+        - parseCarrierWebhook
+      transaction_starts:
+        - withRowLock
+      transaction_commits:
+        - client.query('COMMIT')
+      transaction_rollbacks:
+        - client.query('ROLLBACK')
+      database_sinks:
+        - client.query
+        - pool.query
+      external_effects: []
+      ui_state_mutations: []

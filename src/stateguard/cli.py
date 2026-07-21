@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -168,7 +169,28 @@ def _print(value, as_json: bool = False) -> None:
         print(value)
 
 
+def _load_dotenv(path: Path) -> None:
+    # Minimal, dependency-free `.env` loader: KEY=VALUE per line, `#` comments, optional
+    # quotes. Never overrides a variable already set in the real environment — a shell
+    # export always wins over the file, matching standard dotenv convention. This is
+    # loaded from the current working directory (not `--repo`'s target project), since
+    # secrets like DEEPSEEK_API_KEY are a personal credential shared across every project
+    # this kit scans, not something scoped to one example.
+    if not path.is_file():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
 def main(argv: list[str] | None = None) -> int:
+    _load_dotenv(Path.cwd() / ".env")
     args = _parser().parse_args(argv)
     repo_root = discover_repo_root(args.repo)
 

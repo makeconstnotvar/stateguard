@@ -10,11 +10,12 @@ from stateguard.db import Ledger
 from stateguard.joern_adapter import build_apg, write_apg_jsonl
 
 REAL_EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "order-workflow"
+SHIPMENT_EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "shipment-tracking"
 
 
-def _copy_real_example(tmp_path: Path) -> Path:
+def _copy_real_example(tmp_path: Path, source: Path = REAL_EXAMPLE) -> Path:
     repo = tmp_path / "repo"
-    shutil.copytree(REAL_EXAMPLE, repo)
+    shutil.copytree(source, repo)
     return repo
 
 
@@ -66,6 +67,88 @@ def test_mapping_only_mode_builds_a_self_consistent_apg_from_the_real_example(tm
     result = import_apg_jsonl(ledger, output, source_tool="joern-apg-adapter")
     assert result["nodes"] == len(node_ids)
     assert result["edges"] == len(edges)
+
+
+def test_declared_decoder_is_excluded_from_writes_via_config_not_naming(tmp_path: Path) -> None:
+    repo = _copy_real_example(tmp_path)
+    ledger = Ledger(repo)
+    ledger.initialize()
+    mapping_path = repo / "mappings.yaml"
+
+    records = build_apg(repo, ledger, repo / "specification.yaml", mapping_path)
+    edges = [r for r in records if r["kind"] == "edge"]
+    decoder_id = "symbol:server/decoders.js:decodesubmitorder"
+
+    # decodeSubmitOrder is excluded from handler-detection because it's declared under
+    # framework_adapters[].rules.decoders in mappings.yaml, not because of its name.
+    assert not any(e["source"] == decoder_id for e in edges)
+    handler_id = "symbol:server/submit-order.js:submitorder"
+    assert any(e["type"] == "WRITES" and e["source"] == handler_id for e in edges)
+
+    # Prove the exclusion is actually caused by the `decoders:` declaration, not merely by
+    # decodeSubmitOrder's name coincidentally starting with "decode": remove ONLY the
+    # declaration (the selector text itself is untouched) and confirm the WRITES edge
+    # reappears. Without this half, the assertions above would pass just as well against
+    # the old `.lower().startswith("decode")` naming heuristic this fix replaced.
+    declaration = "      decoders:\n        - decodeSubmitOrder\n"
+    mapping_text = mapping_path.read_text(encoding="utf-8")
+    assert declaration in mapping_text
+    mapping_path.write_text(mapping_text.replace(declaration, ""), encoding="utf-8")
+
+    records_undeclared = build_apg(repo, ledger, repo / "specification.yaml", mapping_path)
+    edges_undeclared = [r for r in records_undeclared if r["kind"] == "edge"]
+    assert any(e["type"] == "WRITES" and e["source"] == decoder_id for e in edges_undeclared)
+
+
+def test_query_kind_node_shared_by_command_and_invariant_uses_commands_name(tmp_path: Path) -> None:
+    repo = _copy_real_example(tmp_path)
+    ledger = Ledger(repo)
+    ledger.initialize()
+
+    records = build_apg(repo, ledger, repo / "specification.yaml", repo / "mappings.yaml")
+    nodes = {r["externalId"]: r for r in records if r["kind"] == "node"}
+    edges = [r for r in records if r["kind"] == "edge"]
+
+    query_id = "query:db/submit-order.sql"
+    # db/submit-order.sql is referenced from CMD-ORDER-SUBMIT (selector "submit_order") and
+    # from both INV-ORDER-002 and INV-ORDER-003 (descriptive-sentence selectors) — all three
+    # collide on the same path-only external ID (query kind is path-only-identified). The
+    # command's short identifier must win the shared node's display name: commands are
+    # processed before invariants specifically so this happens deterministically.
+    assert nodes[query_id]["name"] == "submit_order"
+
+    def has_edge(edge_type: str, source: str, target: str) -> bool:
+        return any(e["type"] == edge_type and e["source"] == source and e["target"] == target for e in edges)
+
+    assert has_edge("CALLS", "command:CMD-ORDER-SUBMIT", query_id)
+    # Broadened ENFORCES: an invariant-section query location (not just `kind: constraint`)
+    # now gets an inbound edge to its invariant, even though the node itself was already
+    # created while processing the commands section above.
+    assert has_edge("ENFORCES", query_id, "invariant:INV-ORDER-002")
+    assert has_edge("ENFORCES", query_id, "invariant:INV-ORDER-003")
+
+    # But the broadening must not go so far that a merely-structural reference (a schema
+    # column, not any code or DB config that rejects a violation) counts as "enforcing" —
+    # INV-ORDER-003 also has a `kind: column` location (public.orders.version) that must
+    # NOT get an ENFORCES edge.
+    assert not has_edge("ENFORCES", "column:public.orders.version", "invariant:INV-ORDER-003")
+
+
+def test_shipment_tracking_declared_decoder_closes_the_documented_gap(tmp_path: Path) -> None:
+    repo = _copy_real_example(tmp_path, source=SHIPMENT_EXAMPLE)
+    ledger = Ledger(repo)
+    ledger.initialize()
+
+    records = build_apg(repo, ledger, repo / "specification.yaml", repo / "mappings.yaml")
+    edges = [r for r in records if r["kind"] == "edge"]
+    decoder_id = "symbol:server/webhook-parser.js:parsecarrierwebhook"
+
+    # This is the exact gap examples/shipment-tracking/README.md documented as deliberately
+    # unfixed: parseCarrierWebhook plays a decoder role without a "decode" prefix. It is now
+    # declared under framework_adapters[].rules.decoders instead of being renamed, proving
+    # the config-driven fix closes the gap without forcing a naming convention on the target
+    # codebase.
+    assert not any(e["source"] == decoder_id for e in edges)
 
 
 def test_enriched_mode_uses_joern_line_ranges_when_available(tmp_path: Path) -> None:
