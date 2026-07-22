@@ -190,6 +190,98 @@ def test_enriched_mode_uses_joern_line_ranges_when_available(tmp_path: Path) -> 
     assert node["properties"]["confidence"] == "observed"
 
 
+# Trimmed excerpt of the actual methods.json produced by `bash scripts/run-joern.sh
+# examples/order-workflow` against real Joern 4.0.580 / jssrc2cpg (astgen 3.47.0). Field
+# names/shapes ("filename" as repo-relative path, "name", 1-indexed "lineNumber"/
+# "lineNumberEnd") and the submitOrder start line (3) were cross-checked against
+# examples/order-workflow/server/submit-order.js's real `export async function
+# submitOrder` declaration. The second "submitOrder" entry is real too: jssrc2cpg emits a
+# speculated external stub for the client-side `this.submitOrder` property access, with
+# filename "<empty>" — included here to prove _enrich_line_range's filename match correctly
+# skips it rather than picking the wrong same-named method.
+REAL_ORDER_WORKFLOW_METHODS_EXCERPT = [
+    {
+        "name": "submitOrder",
+        "astParentFullName": "<empty>",
+        "_id": 107374182414,
+        "signature": "",
+        "astParentType": "<empty>",
+        "lineNumberEnd": 39,
+        "_label": "METHOD",
+        "columnNumberEnd": 1,
+        "fullName": "server/submit-order.js::program:submitOrder",
+        "genericSignature": "<empty>",
+        "isExternal": False,
+        "lineNumber": 3,
+        "columnNumber": 7,
+        "order": 1,
+        "filename": "server/submit-order.js",
+    },
+    {
+        "name": "submitOrder",
+        "astParentFullName": "<speculatedMethods>",
+        "_id": 107374182443,
+        "signature": "",
+        "astParentType": "NAMESPACE_BLOCK",
+        "_label": "METHOD",
+        "fullName": "client/order-store.js::program:<member>(api):submitOrder",
+        "genericSignature": "<empty>",
+        "isExternal": True,
+        "order": 0,
+        "filename": "<empty>",
+    },
+    {
+        "name": "decodeSubmitOrder",
+        "astParentFullName": "<empty>",
+        "_id": 107374182408,
+        "signature": "",
+        "astParentType": "<empty>",
+        "lineNumberEnd": 19,
+        "_label": "METHOD",
+        "columnNumberEnd": 1,
+        "fullName": "server/decoders.js::program:decodeSubmitOrder",
+        "genericSignature": "<empty>",
+        "isExternal": False,
+        "lineNumber": 5,
+        "columnNumber": 7,
+        "order": 1,
+        "filename": "server/decoders.js",
+    },
+]
+
+
+def test_enriched_mode_reconciles_against_real_captured_joern_output(tmp_path: Path) -> None:
+    repo = _copy_real_example(tmp_path)
+    joern_dir = repo / "joern-real-fixture"
+    joern_dir.mkdir()
+    (joern_dir / "methods.json").write_text(
+        json.dumps(REAL_ORDER_WORKFLOW_METHODS_EXCERPT), encoding="utf-8"
+    )
+
+    ledger = Ledger(repo)
+    ledger.initialize()
+    records = build_apg(
+        repo, ledger, repo / "specification.yaml", repo / "mappings.yaml", joern_dir=joern_dir
+    )
+
+    submit_order_node = next(
+        r
+        for r in records
+        if r["kind"] == "node" and r["type"] == "Symbol" and r["artifactPath"] == "server/submit-order.js"
+    )
+    assert submit_order_node["sourceTool"] == "joern-apg-adapter"
+    assert submit_order_node["range"] == {"startLine": 3, "endLine": 39}
+    assert submit_order_node["properties"]["confidence"] == "observed"
+
+    decode_node = next(
+        r
+        for r in records
+        if r["kind"] == "node" and r["type"] == "Symbol" and r["artifactPath"] == "server/decoders.js"
+    )
+    assert decode_node["sourceTool"] == "joern-apg-adapter"
+    assert decode_node["range"] == {"startLine": 5, "endLine": 19}
+
+
 def test_missing_mapped_path_creates_low_severity_finding_and_skips_node(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()

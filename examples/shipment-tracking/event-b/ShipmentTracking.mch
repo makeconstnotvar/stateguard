@@ -27,11 +27,11 @@ INITIALISATION
     event_sequence := {}
 
 OPERATIONS
-    record_checkpoint(s, e, seq, code) =
+    record_checkpoint(s, e, seqn, code) =
         PRE
             s : SHIPMENT &
             e : EVENT &
-            seq : 0..5 &
+            seqn : 0..5 &
             code : {in_transit, out_for_delivery, delivered, exception}
         THEN
             IF s |-> e : processed
@@ -40,7 +40,7 @@ OPERATIONS
             ELSIF status(s) : {delivered, exception}
             THEN
                 skip
-            ELSIF seq <= last_sequence(s)
+            ELSIF seqn <= last_sequence(s)
             THEN
                 skip
             ELSIF not(
@@ -52,9 +52,9 @@ OPERATIONS
                 skip
             ELSE
                 status(s) := code ||
-                last_sequence(s) := seq ||
+                last_sequence(s) := seqn ||
                 processed := processed \/ {s |-> e} ||
-                event_sequence(s |-> e) := seq
+                event_sequence(s |-> e) := seqn
             END
         END
 

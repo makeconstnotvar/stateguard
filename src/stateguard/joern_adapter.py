@@ -123,9 +123,13 @@ def _load_joern_export(joern_dir: Path | None) -> dict[str, list[dict]]:
 
 
 def _enrich_line_range(export: dict[str, list[dict]], path: str, selector: str) -> dict[str, int] | None:
-    # Best-effort: field names follow Joern's documented stable CPG properties
-    # (name/filename/lineNumber). This has not been reconciled against a live
-    # joern-parse run — treat as provisional until it has been.
+    # Field names verified against real `cpg.method.toJsonPretty` output from Joern
+    # 4.0.580 / jssrc2cpg (astgen 3.47.0), for both examples/order-workflow and
+    # examples/shipment-tracking: methods carry "filename" as a repo-relative path,
+    # "name" as the plain function identifier, and 1-indexed "lineNumber" /
+    # "lineNumberEnd" with no offset from the source. The "file"/"methodName"
+    # fallbacks stay in place defensively for other Joern versions/frontends that
+    # document those as the alternate property names.
     for method in export.get("methods") or []:
         filename = method.get("filename") or method.get("file")
         name = method.get("name") or method.get("methodName")

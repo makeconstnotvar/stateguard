@@ -179,25 +179,46 @@ def _stage_joern_and_apg(
     report: CycleReport,
 ) -> None:
     joern_dir = (repo_root / config.joern_output).resolve()
-    enriched = False
+    attempt_enrichment = False
     if _has_tool("joern-parse") and _has_tool("joern"):
         script = _kit_root() / "scripts" / "run-joern.sh"
         result = _run(["bash", str(script), str(repo_root)], timeout=1800)
         if result.returncode == 0:
-            enriched = True
-            report.stages.append(StageResult("joern", "ok", "raw CPG export written"))
+            attempt_enrichment = True
         else:
             report.stages.append(StageResult("joern", "failed", (result.stderr or result.stdout)[-500:]))
     else:
         report.stages.append(StageResult("joern", "skipped", "SKIPPED: joern/joern-parse not installed"))
 
-    records = build_apg(repo_root, ledger, spec_path, mapping_path, joern_dir=joern_dir if enriched else None)
+    records = build_apg(
+        repo_root, ledger, spec_path, mapping_path, joern_dir=joern_dir if attempt_enrichment else None
+    )
+    enriched_nodes = sum(1 for r in records if r["kind"] == "node" and r.get("sourceTool") == "joern-apg-adapter")
+    symbol_nodes = sum(1 for r in records if r["kind"] == "node" and r.get("type") == "Symbol")
+
+    if attempt_enrichment:
+        # joern-parse/joern exiting 0 doesn't guarantee the export actually matched
+        # anything — observed on a real install where astgen silently resolved to a bare
+        # relative path and produced an empty CPG despite exit code 0. Only trust "ok" when
+        # there was something to enrich (>=1 mapped symbol location) and at least one
+        # actually got enriched.
+        if enriched_nodes > 0 or symbol_nodes == 0:
+            report.stages.append(StageResult("joern", "ok", "raw CPG export written"))
+        else:
+            report.stages.append(
+                StageResult(
+                    "joern",
+                    "failed",
+                    f"joern-parse/joern exited 0 but enriched none of {symbol_nodes} mapped symbol location(s)",
+                )
+            )
+
     output = repo_root / ".stateguard" / "results" / "apg.jsonl"
     write_apg_jsonl(records, output)
     import_result = import_apg_jsonl(
-        ledger, output, source_tool="joern-apg-adapter" if enriched else "stateguard-mapping"
+        ledger, output, source_tool="joern-apg-adapter" if enriched_nodes > 0 else "stateguard-mapping"
     )
-    mode = "enriched" if enriched else "mapping-only"
+    mode = "enriched" if enriched_nodes > 0 else "mapping-only"
     report.stages.append(
         StageResult(
             "apg", "ok", f"built in {mode} mode: {import_result['nodes']} nodes, {import_result['edges']} edges"

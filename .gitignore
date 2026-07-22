@@ -37,6 +37,10 @@ npm-debug.log*
 # Joern
 workspace/
 
+# ProB — compilation-cache byproduct probcli writes next to the .mch source it runs
+*.prob
+prob-run.log
+
 # Secrets / local env
 .env
 .env.local
